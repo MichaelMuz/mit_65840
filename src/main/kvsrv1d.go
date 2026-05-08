@@ -1,3 +1,5 @@
+//go:build kvsrv1d
+
 package main
 
 import (

@@ -1,3 +1,5 @@
+//go:build kvraft1d
+
 package main
 
 import (

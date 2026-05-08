@@ -1,3 +1,5 @@
+//go:build diskvd
+
 package main
 
 //

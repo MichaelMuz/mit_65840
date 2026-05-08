@@ -1,3 +1,5 @@
+//go:build lockd
+
 package main
 
 // export GOPATH=~/6.5840

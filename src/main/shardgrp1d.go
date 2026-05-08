@@ -1,3 +1,5 @@
+//go:build shardgrp1d
+
 package main
 
 import (

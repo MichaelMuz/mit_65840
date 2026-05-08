@@ -1,3 +1,5 @@
+//go:build mrsequential
+
 package main
 
 //

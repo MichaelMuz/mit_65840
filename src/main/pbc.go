@@ -1,3 +1,5 @@
+//go:build pbc
+
 package main
 
 //

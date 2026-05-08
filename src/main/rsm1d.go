@@ -1,3 +1,5 @@
+//go:build rsm1d
+
 package main
 
 import (

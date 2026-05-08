@@ -1,3 +1,5 @@
+//go:build viewd
+
 package main
 
 //

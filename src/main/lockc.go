@@ -1,3 +1,5 @@
+//go:build lockc
+
 package main
 
 //
