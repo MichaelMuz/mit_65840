@@ -1,34 +1,54 @@
 package mr
 
-import "log"
-import "net"
-import "os"
-import "net/rpc"
-import "net/http"
+import (
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
+	"os"
+)
 
 type Coordinator struct {
 	// Your definitions here.
 
-	autoinc      int
-	filesWaiting []string
-	filesPending []string
+	autoinc                int
+	filesWaitingMap        []string
+	filesProgressingMap    map[string]int
+	filesWaitingReduce     []string
+	filesProgressingReduce map[string]int
+	filesFinished          []string
 }
 
 // Your code here -- RPC handlers for the worker to call.
+func (c *Coordinator) SignalFinished(arg *SignalFileReadyArgs, reply *SignalFileReadyReply) error {
+	_, in := c.filesProgressingMap[arg.Orig]
+	if !in {
+		fmt.Printf("laggard finished %v too late", arg.Orig)
+		return nil
+	}
+	delete(c.filesProgressingMap, arg.Orig)
+	c.filesWaitingReduce = append(c.filesWaitingReduce, arg.Orig)
+	fmt.Printf("file %v processed by task %v, intermediate result in file %v", arg.Orig, arg.Task, arg.Oname)
+
+	return nil
+}
+
 func (c *Coordinator) RequestWork(args *WorkRequestArgs, reply *WorkRequestReply) error {
-	if len(c.filesWaiting) == 0 {
+	if len(c.filesWaitingMap) == 0 {
 		reply.File = ""
 		return nil
 	}
 
-	assigned := c.filesWaiting[len(c.filesWaiting)-1]
-	c.filesWaiting = c.filesWaiting[:len(c.filesWaiting)-1]
-	c.filesPending = append(c.filesPending, assigned)
-
+	assigned := c.filesWaitingMap[len(c.filesWaitingMap)-1]
 	reply.File = assigned
-	reply.Task = c.autoinc
 
+	reply.Task = c.autoinc
 	c.autoinc += 1
+
+	c.filesWaitingMap = c.filesWaitingMap[:len(c.filesWaitingMap)-1]
+	c.filesProgressingMap[assigned] = reply.Task
+
 	return nil
 }
 
@@ -66,10 +86,10 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator {
-	c := Coordinator{}
+	c := Coordinator{filesProgressingMap: make(map[string]int), filesProgressingReduce: make(map[string]int)}
 
 	// Your code here.
-	c.filesWaiting = files
+	c.filesWaitingMap = files
 
 	c.server(sockname)
 	return &c

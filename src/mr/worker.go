@@ -49,18 +49,22 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 	if err != nil {
 		log.Fatalf("cannot open %v", filename)
 	}
+
 	content, err := io.ReadAll(file)
 	if err != nil {
 		log.Fatalf("cannot read %v", filename)
 	}
+
 	kva := mapf(filename, string(content))
 	rhash := ihash(filename)
 
 	oname := fmt.Sprintf("mr-%v-%v", task, rhash)
+
 	ofile, err := os.Create(oname)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
+
 	enc := json.NewEncoder(ofile)
 	err = enc.Encode(&kva)
 	if err != nil {
@@ -72,10 +76,7 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 		log.Fatalf("%v", err)
 	}
 
-	err = os.Rename(ofile.Name(), oname)
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
+	signalDone(filename, task, oname)
 
 }
 
@@ -96,6 +97,17 @@ func GetWork() (string, int) {
 		}
 	}
 	return reply.File, reply.Task
+}
+
+func signalDone(orig string, task int, oname string) {
+	args := SignalFileReadyArgs{orig, task, oname}
+	reply := SignalFileReadyReply{}
+	ok := call("Coordinator.SignalFinished", &args, &reply)
+	if !ok {
+		fmt.Printf("call failed!\n")
+		return
+	}
+	fmt.Printf("Task %v signaling %v was processed into %v \n", task, orig, oname)
 }
 
 // example function to show how to make an RPC call to the coordinator.
