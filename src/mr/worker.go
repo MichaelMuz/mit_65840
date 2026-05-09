@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"hash/fnv"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/rpc"
 	"os"
@@ -49,7 +49,7 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 	if err != nil {
 		log.Fatalf("cannot open %v", filename)
 	}
-	content, err := ioutil.ReadAll(file)
+	content, err := io.ReadAll(file)
 	if err != nil {
 		log.Fatalf("cannot read %v", filename)
 	}
@@ -59,11 +59,23 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 	oname := fmt.Sprintf("mr-%v-%v", task, rhash)
 	ofile, err := os.Create(oname)
 	if err != nil {
-		log.Fatalf("Cannot create %v", filename)
+		log.Fatalf("%v", err)
 	}
 	enc := json.NewEncoder(ofile)
-	enc.Encode(&kva)
-	ofile.Close()
+	err = enc.Encode(&kva)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+
+	err = ofile.Close()
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+
+	err = os.Rename(ofile.Name(), oname)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
 
 }
 
@@ -116,7 +128,7 @@ func CallExample() {
 // send an RPC request to the coordinator, wait for the response.
 // usually returns true.
 // returns false if something goes wrong.
-func call(rpcname string, args interface{}, reply interface{}) bool {
+func call(rpcname string, args any, reply any) bool {
 	// c, err := rpc.DialHTTP("tcp", "127.0.0.1"+":1234")
 	c, err := rpc.DialHTTP("unix", coordSockName)
 	if err != nil {
