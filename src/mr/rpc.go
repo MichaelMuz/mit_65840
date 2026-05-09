@@ -20,4 +20,8 @@ type ExampleReply struct {
 }
 
 // Add your RPC definitions here.
-
+type WorkRequestArgs struct{}
+type WorkRequestReply struct {
+	File string
+	Task int
+}

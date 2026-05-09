@@ -1,11 +1,15 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
-import "os"
-
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"net/rpc"
+	"os"
+	"time"
+)
 
 // Map functions return a slice of KeyValue.
 type KeyValue struct {
@@ -23,18 +27,63 @@ func ihash(key string) int {
 
 var coordSockName string // socket for coordinator
 
-
 // main/mrworker.go calls this function.
 func Worker(sockname string, mapf func(string, string) []KeyValue,
 	reducef func(string, []string) string) {
 
 	coordSockName = sockname
-
-	// Your worker implementation here.
-
 	// uncomment to send the Example RPC to the coordinator.
 	CallExample()
 
+	// Your worker implementation here.
+
+	// We are given the map/reduce function here, we don't know if we are a map or reduce worker yet
+
+	// Worker needs to:
+	// 1. Reach out to coordinator and ask for tasks, coordinator will give it a file name and whether to map or reduce
+	// 2. map on that input
+	// 3. At the end sort the outputs into intermediate files. name mr-X-Y where X is map task number and Y is reduce task number
+	filename, task := GetWork()
+
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannot open %v", filename)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", filename)
+	}
+	kva := mapf(filename, string(content))
+	rhash := ihash(filename)
+
+	oname := fmt.Sprintf("mr-%v-%v", task, rhash)
+	ofile, err := os.Create(oname)
+	if err != nil {
+		log.Fatalf("Cannot create %v", filename)
+	}
+	enc := json.NewEncoder(ofile)
+	enc.Encode(&kva)
+	ofile.Close()
+
+}
+
+func GetWork() (string, int) {
+	args := WorkRequestArgs{}
+	reply := WorkRequestReply{}
+	for {
+		ok := call("Coordinator.RequestWork", &args, &reply)
+		if !ok {
+			fmt.Printf("call failed!\n")
+		}
+
+		if len(reply.File) == 0 {
+			time.Sleep(1 * time.Second)
+		} else {
+			fmt.Printf("Task %v assigned to work on %v\n", reply.Task, reply.File)
+			break
+		}
+	}
+	return reply.File, reply.Task
 }
 
 // example function to show how to make an RPC call to the coordinator.
