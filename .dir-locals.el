@@ -1,1 +1,1 @@
-((go-mode . ((lsp-go-build-flags . ["-tags=mrsequential"]))))
+((go-mode . ((lsp-go-build-flags . ["-tags=mrsequential","-tags=pbc","-tags=lockd","-tags=diskvd","-tags=shardgrp1d","-tags=mrworker","-tags=kvsrv1d","-tags=rsm1d","-tags=pbd","-tags=lockc","-tags=mrcoordinator","-tags=kvraft1d","-tags=viewd","-tags=raft1d"]))))
