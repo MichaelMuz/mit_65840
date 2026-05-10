@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -103,22 +104,27 @@ func (c *Coordinator) run(files []string, nReduce int) {
 
 	go c.controller()
 
+	fmt.Println("Starting map tasks")
 	for _, t := range mTasks {
 		c.tasks <- t
 	}
 
+	fmt.Println("Waiting for map tasks to finish")
 	for range len(files) {
 		_ = <-c.finished
 	}
 
+	fmt.Println("Starting reduce tasks")
 	for _, t := range rTasks {
 		c.tasks <- t
 	}
 
+	fmt.Println("Waiting for reduce tasks to finish")
 	for range nReduce {
 		_ = <-c.finished
 	}
 
+	fmt.Println("All tasks finished")
 	c.done = true
 }
 

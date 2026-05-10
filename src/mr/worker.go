@@ -150,22 +150,30 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 	// 1. Reach out to coordinator and ask for tasks, coordinator will give it a file name and whether to map or reduce
 	// 2. map on that input
 	// 3. At the end sort the outputs into intermediate files. name mr-X-Y where X is map task number and Y is reduce task number
-	nReduce, mapper, filename, task, uuid := GetWork()
-	if mapper {
-		handleMap(mapf, filename, task, nReduce, uuid)
-	} else {
-		handleReduce(reducef, task, uuid)
+	for {
+		nReduce, mapper, filename, task, uuid, cont := GetWork()
+		if !cont {
+			break
+		} else if mapper {
+			handleMap(mapf, filename, task, nReduce, uuid)
+		} else {
+			handleReduce(reducef, task, uuid)
+		}
 	}
 
 }
 
-func GetWork() (int, bool, string, int, int) {
+func GetWork() (int, bool, string, int, int, bool) {
 	args := WorkRequestArgs{}
 	reply := WorkRequestReply{}
+	fails := 0
 	for {
 		ok := call("Coordinator.RequestWork", &args, &reply)
 		if !ok {
 			fmt.Printf("call failed!\n")
+			if fails >= 10 {
+				return 0, false, "", 0, 0, false
+			}
 		}
 
 		if !reply.Ready {
@@ -175,7 +183,7 @@ func GetWork() (int, bool, string, int, int) {
 			break
 		}
 	}
-	return reply.TotalReducers, reply.Mapper, reply.File, reply.Task, reply.Uuid
+	return reply.TotalReducers, reply.Mapper, reply.File, reply.Task, reply.Uuid, true
 }
 
 func signalDone(uuid int) {
