@@ -26,7 +26,7 @@ type Coordinator struct {
 	completedIds chan int
 	finished     chan WorkRequestReply
 
-	done bool
+	done atomic.Bool
 }
 
 // Your code here -- RPC handlers for the worker to call.
@@ -86,7 +86,7 @@ func (c *Coordinator) controller() {
 // main/mrcoordinator.go calls Done() periodically to find out
 // if the entire job has finished.
 func (c *Coordinator) Done() bool {
-	return c.done
+	return c.done.Load()
 }
 
 func (c *Coordinator) run(files []string, nReduce int) {
@@ -129,14 +129,16 @@ func (c *Coordinator) run(files []string, nReduce int) {
 	}
 
 	fmt.Println("All tasks finished")
-	c.done = true
+
+	// waste to use an atomic here bc we could just write to a regular boolean but go --race thinks it is a data race
+	c.done.Store(true)
 }
 
 // create a Coordinator.
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator {
-	c := Coordinator{nReduce, atomic.Int32{}, make(chan WorkRequestReply, len(files)), make(chan TsWork, len(files)), make(chan int, len(files)), make(chan WorkRequestReply, len(files)), false}
+	c := Coordinator{nReduce, atomic.Int32{}, make(chan WorkRequestReply, len(files)), make(chan TsWork, len(files)), make(chan int, len(files)), make(chan WorkRequestReply, len(files)), atomic.Bool{}}
 	c.server(sockname)
 	// Your code here.
 	go c.run(files, nReduce)
