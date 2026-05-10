@@ -104,14 +104,7 @@ func (c *Coordinator) Done() bool {
 	return c.done
 }
 
-// create a Coordinator.
-// main/mrcoordinator.go calls this function.
-// nReduce is the number of reduce tasks to use.
-func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator {
-	c := Coordinator{nReduce, atomic.Int32{}, make(chan WorkRequestReply, len(files)), make(chan TsWork, len(files)), make(chan int, len(files)), make(chan WorkRequestReply, len(files)), false}
-
-	// Your code here.
-
+func (c *Coordinator) run(files []string, nReduce int) {
 	// make the packaged up mapper tasks
 	mTasks := []WorkRequestReply{}
 	n := 0
@@ -128,7 +121,6 @@ func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator 
 		rTasks = append(rTasks, t)
 	}
 
-	c.server(sockname)
 	go c.controller()
 
 	for _, t := range mTasks {
@@ -146,6 +138,18 @@ func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator 
 	for range nReduce {
 		_ = <-c.finished
 	}
+
+	c.done = true
+}
+
+// create a Coordinator.
+// main/mrcoordinator.go calls this function.
+// nReduce is the number of reduce tasks to use.
+func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator {
+	c := Coordinator{nReduce, atomic.Int32{}, make(chan WorkRequestReply, len(files)), make(chan TsWork, len(files)), make(chan int, len(files)), make(chan WorkRequestReply, len(files)), false}
+	c.server(sockname)
+	// Your code here.
+	go c.run(files, nReduce)
 
 	return &c
 }
