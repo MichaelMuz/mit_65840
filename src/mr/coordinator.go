@@ -30,7 +30,7 @@ func (c *Coordinator) SignalFinished(arg *SignalFileReadyArgs, reply *SignalFile
 	}
 	delete(c.filesProgressingMap, arg.Orig)
 	c.filesWaitingReduce = append(c.filesWaitingReduce, arg.Orig)
-	fmt.Printf("file %v processed by task %v, intermediate result in file %v", arg.Orig, arg.Task, arg.Oname)
+	fmt.Printf("file %v processed by task %v, intermediate result in file %v", arg.Orig, arg.Task)
 
 	return nil
 }
