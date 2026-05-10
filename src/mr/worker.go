@@ -73,7 +73,7 @@ func handleMap(mapf func(string, string) []KeyValue, filename string, task int, 
 
 func handleReduce(reducef func(string, []string) string, reducerNum int) {
 	// collect all the files that I need which must match my reducer num in name
-	rNumSt := string(reducerNum)
+	rNumSt := fmt.Sprintf("%v", reducerNum)
 
 	dir, err := os.ReadDir(".")
 	if err != nil {
@@ -119,7 +119,7 @@ func handleReduce(reducef func(string, []string) string, reducerNum int) {
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
-	_, err = fmt.Fprintf(ofile, strings.Join(reds, ""))
+	_, err = fmt.Fprint(ofile, strings.Join(reds, ""))
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
@@ -173,7 +173,7 @@ func GetWork() (int, bool, string, int, int) {
 			break
 		}
 	}
-	return reply.nReduce, reply.Mapper, reply.File, reply.Task, reply.reducerNum
+	return reply.TotalReducers, reply.Mapper, reply.File, reply.Task, reply.reducerNum
 }
 
 func signalDone(mapper bool, orig string, task int) {
