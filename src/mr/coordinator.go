@@ -129,7 +129,7 @@ func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator 
 	}
 
 	c.server(sockname)
-	c.controller()
+	go c.controller()
 
 	for _, t := range mTasks {
 		c.tasks <- t
