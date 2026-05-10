@@ -183,6 +183,8 @@ func GetWork() (int, bool, string, int, int, bool) {
 			break
 		}
 	}
+
+	fmt.Printf("Got task with uuid %v\n", reply.Uuid)
 	return reply.TotalReducers, reply.Mapper, reply.File, reply.Task, reply.Uuid, true
 }
 

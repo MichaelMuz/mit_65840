@@ -35,6 +35,7 @@ func (c *Coordinator) RequestWork(args *WorkRequestArgs, reply *WorkRequestReply
 	select {
 	case t = <-c.tasks:
 	default:
+		fmt.Print("No work to assign now. ")
 		reply.Ready = false
 		return nil
 	}
@@ -45,10 +46,12 @@ func (c *Coordinator) RequestWork(args *WorkRequestArgs, reply *WorkRequestReply
 
 	c.pending <- TsWork{t, time.Now()}
 
+	fmt.Printf("task with uuid %v now assigned\n", t.Uuid)
 	return nil
 }
 
 func (c *Coordinator) SignalFinished(arg *SignalFileReadyArgs, reply *SignalFileReadyReply) error {
+	fmt.Printf("task with uuid %v signaled finished \n", arg.Uuid)
 	c.completedIds <- arg.Uuid
 	return nil
 }
@@ -70,6 +73,7 @@ func (c *Coordinator) controller() {
 			t := time.Now()
 			for k, v := range pending {
 				if t.Sub(v.ts) > time.Second*10 {
+					fmt.Printf("task with uuid %v taking too long, rescheduling \n", k)
 					delete(pending, k)
 					c.tasks <- v.task
 				}
