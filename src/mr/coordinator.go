@@ -1,68 +1,153 @@
 package mr
 
 import (
-	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"net/rpc"
 	"os"
+	"sync/atomic"
+	"time"
 )
+
+// plan:
+// There will be a work queue formed by a channel
+// The Request work function will read the next thing from the channel
+// It will need to push it into a monitoring work channel where a persistent go routine is gonna check
+//    if any machines have fallen too behind then push back into the work queue channel
+//    Anything that truly finished will have that task pushed into a finished channel
+// Once all the mapping tasks are signaled to be done (the finished channel is the same of num files)
+//    we will push all the reduce tasks into the todo channel to be handed out
+//
+// This is similar to what I did initially with the slices but with channels
+
+type TsWork struct {
+	task WorkRequestReply
+	ts   time.Time
+}
 
 type Coordinator struct {
 	// Your definitions here.
 	nReduce int
+	autoinc atomic.Int32
 
-	autoinc                int
-	filesWaitingMap        []string
-	filesProgressingMap    map[string]int
-	filesWaitingReduce     []string
-	filesProgressingReduce map[string]int
-	filesFinished          []string
+	tasks        chan WorkRequestReply
+	pending      chan TsWork
+	completedIds chan int
+	finished     chan WorkRequestReply
+
+	done bool
 }
 
 // Your code here -- RPC handlers for the worker to call.
-func (c *Coordinator) SignalFinished(arg *SignalFileReadyArgs, reply *SignalFileReadyReply) error {
-	_, in := c.filesProgressingMap[arg.Orig]
-	if !in {
-		fmt.Printf("laggard finished %v too late", arg.Orig)
-		return nil
-	}
-	delete(c.filesProgressingMap, arg.Orig)
-	c.filesWaitingReduce = append(c.filesWaitingReduce, arg.Orig)
-	fmt.Printf("file %v processed by task %v, intermediate", arg.Orig, arg.Task)
-
-	return nil
-}
-
 func (c *Coordinator) RequestWork(args *WorkRequestArgs, reply *WorkRequestReply) error {
-	if len(c.filesWaitingMap) == 0 {
+	var t WorkRequestReply
+	select {
+	case t = <-c.tasks:
+	default:
 		reply.Ready = false
 		return nil
 	}
 
-	reply.Ready = true
-	reply.Mapper = true
-	reply.TotalReducers = c.nReduce
+	// work is preformed. I just need to add a new uuid to it
+	t.Uuid = int(c.autoinc.Add(1) - 1)
+	*reply = t
 
-	assigned := c.filesWaitingMap[len(c.filesWaitingMap)-1]
-	reply.File = assigned
-
-	reply.Task = c.autoinc
-	c.autoinc += 1
-
-	c.filesWaitingMap = c.filesWaitingMap[:len(c.filesWaitingMap)-1]
-	c.filesProgressingMap[assigned] = reply.Task
+	c.pending <- TsWork{t, time.Now()}
 
 	return nil
 }
 
-// an example RPC handler.
-//
-// the RPC argument and reply types are defined in rpc.go.
-func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
-	reply.Y = args.X + 1
+func (c *Coordinator) SignalFinished(arg *SignalFileReadyArgs, reply *SignalFileReadyReply) error {
+	c.completedIds <- arg.uuid
+	// _, in := c.filesProgressingMap[arg.Orig]
+	// if !in {
+	// 	fmt.Printf("laggard finished %v too late", arg.Orig)
+	// 	return nil
+	// }
+	// delete(c.filesProgressingMap, arg.Orig)
+	// c.filesWaitingReduce = append(c.filesWaitingReduce, arg.Orig)
+	// fmt.Printf("file %v processed by task %v, intermediate", arg.Orig, arg.Task)
+
 	return nil
+}
+
+// keeps track of pending tasks and pushes them back on work queue if not done fast enough
+func (c *Coordinator) controller() {
+	pending := map[int]TsWork{}
+	for {
+		select {
+		case p := <-c.pending:
+			pending[p.task.Uuid] = p
+		case co := <-c.completedIds:
+			tsk, found := pending[co]
+			if found {
+				delete(pending, co)
+				c.finished <- tsk.task
+			}
+		default:
+			t := time.Now()
+			for k, v := range pending {
+				if t.Sub(v.ts) > time.Second*10 {
+					delete(pending, k)
+					c.tasks <- v.task
+				}
+			}
+			time.Sleep(time.Second)
+		}
+	}
+}
+
+// main/mrcoordinator.go calls Done() periodically to find out
+// if the entire job has finished.
+func (c *Coordinator) Done() bool {
+	return c.done
+}
+
+// create a Coordinator.
+// main/mrcoordinator.go calls this function.
+// nReduce is the number of reduce tasks to use.
+func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator {
+	c := Coordinator{nReduce, atomic.Int32{}, make(chan WorkRequestReply, len(files)), make(chan TsWork, len(files)), make(chan int, len(files)), make(chan WorkRequestReply, len(files)), false}
+
+	// Your code here.
+
+	// make the packaged up mapper tasks
+	mTasks := []WorkRequestReply{}
+	n := 0
+	for _, f := range files {
+		t := WorkRequestReply{true, true, f, n, nReduce, -1}
+		mTasks = append(mTasks, t)
+		n++
+	}
+
+	// make the packaged up reducer tasks
+	rTasks := []WorkRequestReply{}
+	for r := range nReduce {
+		t := WorkRequestReply{true, false, "", r, nReduce, -1}
+		rTasks = append(rTasks, t)
+	}
+
+	c.server(sockname)
+	c.controller()
+
+	for _, t := range mTasks {
+		c.tasks <- t
+	}
+
+	for range len(files) {
+		_ = <-c.finished
+	}
+
+	for _, t := range rTasks {
+		c.tasks <- t
+	}
+
+	for range nReduce {
+		_ = <-c.finished
+	}
+
+	return &c
 }
 
 // start a thread that listens for RPCs from worker.go
@@ -77,25 +162,10 @@ func (c *Coordinator) server(sockname string) {
 	go http.Serve(l, nil)
 }
 
-// main/mrcoordinator.go calls Done() periodically to find out
-// if the entire job has finished.
-func (c *Coordinator) Done() bool {
-	ret := false
-
-	// Your code here.
-
-	return ret
-}
-
-// create a Coordinator.
-// main/mrcoordinator.go calls this function.
-// nReduce is the number of reduce tasks to use.
-func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator {
-	c := Coordinator{nReduce: nReduce, filesProgressingMap: make(map[string]int), filesProgressingReduce: make(map[string]int)}
-
-	// Your code here.
-	c.filesWaitingMap = files
-
-	c.server(sockname)
-	return &c
+// an example RPC handler.
+//
+// the RPC argument and reply types are defined in rpc.go.
+func (c *Coordinator) Example(args *ExampleArgs, reply *ExampleReply) error {
+	reply.Y = args.X + 1
+	return nil
 }

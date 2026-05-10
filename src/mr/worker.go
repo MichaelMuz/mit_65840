@@ -26,7 +26,7 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-func handleMap(mapf func(string, string) []KeyValue, filename string, task int, nReduce int) {
+func handleMap(mapf func(string, string) []KeyValue, filename string, task int, nReduce int, uuid int) {
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatalf("cannot open %v", filename)
@@ -53,7 +53,7 @@ func handleMap(mapf func(string, string) []KeyValue, filename string, task int, 
 
 	for h, slc := range agg {
 		oname := fmt.Sprintf("mr-%v-%v", task, h)
-		tmpName := fmt.Sprintf("%v-tmp", oname)
+		tmpName := fmt.Sprintf("%v-%v-tmp", oname, uuid)
 
 		ofile, err := os.Create(tmpName)
 		if err != nil {
@@ -68,10 +68,10 @@ func handleMap(mapf func(string, string) []KeyValue, filename string, task int, 
 		os.Rename(tmpName, oname)
 	}
 
-	signalDone(true, filename, task)
+	signalDone(uuid)
 }
 
-func handleReduce(reducef func(string, []string) string, reducerNum int) {
+func handleReduce(reducef func(string, []string) string, reducerNum int, uuid int) {
 	// collect all the files that I need which must match my reducer num in name
 	rNumSt := fmt.Sprintf("%v", reducerNum)
 
@@ -128,6 +128,8 @@ func handleReduce(reducef func(string, []string) string, reducerNum int) {
 	}
 
 	os.Rename(onameTmp, oname)
+
+	signalDone(uuid)
 }
 
 var coordSockName string // socket for coordinator
@@ -148,11 +150,11 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 	// 1. Reach out to coordinator and ask for tasks, coordinator will give it a file name and whether to map or reduce
 	// 2. map on that input
 	// 3. At the end sort the outputs into intermediate files. name mr-X-Y where X is map task number and Y is reduce task number
-	nReduce, mapper, filename, task, reducerNum := GetWork()
+	nReduce, mapper, filename, task, uuid := GetWork()
 	if mapper {
-		handleMap(mapf, filename, task, nReduce)
+		handleMap(mapf, filename, task, nReduce, uuid)
 	} else {
-		handleReduce(reducef, reducerNum)
+		handleReduce(reducef, task, uuid)
 	}
 
 }
@@ -173,18 +175,18 @@ func GetWork() (int, bool, string, int, int) {
 			break
 		}
 	}
-	return reply.TotalReducers, reply.Mapper, reply.File, reply.Task, reply.reducerNum
+	return reply.TotalReducers, reply.Mapper, reply.File, reply.Task, reply.Uuid
 }
 
-func signalDone(mapper bool, orig string, task int) {
-	args := SignalFileReadyArgs{mapper, orig, task}
+func signalDone(uuid int) {
+	args := SignalFileReadyArgs{uuid}
 	reply := SignalFileReadyReply{}
 	ok := call("Coordinator.SignalFinished", &args, &reply)
 	if !ok {
 		fmt.Printf("call failed!\n")
 		return
 	}
-	fmt.Printf("Task %v signaling %v was processed \n", task, orig)
+	fmt.Printf("Task with uuid %v signaling finished \n", uuid)
 }
 
 // example function to show how to make an RPC call to the coordinator.
