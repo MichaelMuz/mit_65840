@@ -26,7 +26,7 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-func handleMap(mapf func(string, string) []KeyValue, filename string, task int) {
+func handleMap(mapf func(string, string) []KeyValue, filename string, task int, nReduce int) {
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatalf("cannot open %v", filename)
@@ -38,60 +38,96 @@ func handleMap(mapf func(string, string) []KeyValue, filename string, task int) 
 	}
 
 	kva := mapf(filename, string(content))
-	rhash := ihash(filename)
 
-	oname := fmt.Sprintf("mr-%v-%v", task, rhash)
+	agg := map[int][]KeyValue{}
+	for _, kv := range kva {
+		h := ihash(kv.Key) % nReduce
 
-	ofile, err := os.Create(oname)
-	if err != nil {
-		log.Fatalf("%v", err)
+		slc, exists := agg[h]
+		if !exists {
+			slc = []KeyValue{}
+			agg[h] = slc
+		}
+		agg[h] = append(agg[h], kv)
 	}
 
-	enc := json.NewEncoder(ofile)
-	err = enc.Encode(&kva)
-	if err != nil {
-		log.Fatalf("%v", err)
+	for h, slc := range agg {
+		oname := fmt.Sprintf("mr-%v-%v", task, h)
+		tmpName := fmt.Sprintf("%v-tmp", oname)
+
+		ofile, err := os.Create(tmpName)
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
+
+		enc := json.NewEncoder(ofile)
+		err = enc.Encode(&slc)
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
+		os.Rename(tmpName, oname)
 	}
 
-	err = ofile.Close()
-	if err != nil {
-		log.Fatalf("%v", err)
-	}
-
-	signalDone(true, filename, task, oname)
+	signalDone(true, filename, task)
 }
 
-func handleReduce(reducef func(string, []string) string, hash string, task int) {
-	// collect all the files that I need
+func handleReduce(reducef func(string, []string) string, reducerNum int) {
+	// collect all the files that I need which must match my reducer num in name
+	rNumSt := string(reducerNum)
+
 	dir, err := os.ReadDir(".")
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
-	// kvs := []KeyValue{}
+
 	kvs := map[string][]string{}
 	for _, de := range dir {
 		if de.IsDir() {
 			continue
 		}
-		if spl := strings.Split(de.Name(), "-"); spl[len(spl)-1] != hash {
+		if spl := strings.Split(de.Name(), "-"); spl[len(spl)-1] != rNumSt {
 			continue
 		}
 		bytes, err := os.ReadFile(de.Name())
 
-		kv := KeyValue{}
-		err = json.Unmarshal(bytes, &kv)
+		slc := []KeyValue{}
+		err = json.Unmarshal(bytes, &slc)
 		if err != nil {
 			log.Fatalf("%v", err)
 		}
 
-		slc, exists := kvs[kv.Key]
-		if !exists {
-			slc = []string{}
-			kvs[kv.Key] = slc
+		for _, pair := range slc {
+			vals, exists := kvs[pair.Key]
+			if !exists {
+				vals = []string{}
+				kvs[pair.Key] = vals
+			}
+			kvs[pair.Key] = append(kvs[pair.Key], pair.Value)
 		}
-		kvs[kv.Key] = append(kvs[kv.Key], kv.Value)
 	}
 
+	reds := []string{}
+	for k, vals := range kvs {
+		output := reducef(k, vals)
+		pretty := fmt.Sprintf("%v %v\n", k, output) // exact expected output
+		reds = append(reds, pretty)
+	}
+
+	oname := fmt.Sprintf("mr-out-%v", reducerNum)
+	onameTmp := fmt.Sprintf("%v-tmp", oname)
+	ofile, err := os.Create(oname)
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	_, err = fmt.Fprintf(ofile, strings.Join(reds, ""))
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	if err := ofile.Close(); err != nil {
+		log.Fatalf("%v", err)
+	}
+
+	os.Rename(onameTmp, oname)
 }
 
 var coordSockName string // socket for coordinator
@@ -112,16 +148,16 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 	// 1. Reach out to coordinator and ask for tasks, coordinator will give it a file name and whether to map or reduce
 	// 2. map on that input
 	// 3. At the end sort the outputs into intermediate files. name mr-X-Y where X is map task number and Y is reduce task number
-	mapper, filename, task := GetWork()
+	nReduce, mapper, filename, task, reducerNum := GetWork()
 	if mapper {
-		handleMap(mapf, filename, task)
+		handleMap(mapf, filename, task, nReduce)
 	} else {
-		handleReduce(reducef, filename, task)
+		handleReduce(reducef, reducerNum)
 	}
 
 }
 
-func GetWork() (bool, string, int) {
+func GetWork() (int, bool, string, int, int) {
 	args := WorkRequestArgs{}
 	reply := WorkRequestReply{}
 	for {
@@ -137,18 +173,18 @@ func GetWork() (bool, string, int) {
 			break
 		}
 	}
-	return reply.Mapper, reply.File, reply.Task
+	return reply.nReduce, reply.Mapper, reply.File, reply.Task, reply.reducerNum
 }
 
-func signalDone(mapper bool, orig string, task int, oname string) {
-	args := SignalFileReadyArgs{mapper, orig, task, oname}
+func signalDone(mapper bool, orig string, task int) {
+	args := SignalFileReadyArgs{mapper, orig, task}
 	reply := SignalFileReadyReply{}
 	ok := call("Coordinator.SignalFinished", &args, &reply)
 	if !ok {
 		fmt.Printf("call failed!\n")
 		return
 	}
-	fmt.Printf("Task %v signaling %v was processed into %v \n", task, orig, oname)
+	fmt.Printf("Task %v signaling %v was processed \n", task, orig)
 }
 
 // example function to show how to make an RPC call to the coordinator.

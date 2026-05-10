@@ -22,16 +22,17 @@ type ExampleReply struct {
 // Add your RPC definitions here.
 type WorkRequestArgs struct{}
 type WorkRequestReply struct {
-	Mapper bool   // true if map, false if reduce
-	File   string // file name if mapping hash if reducing
-	Task   int    // task number
+	Mapper  bool   // true if map, false if reduce
+	File    string // file name if mapping, ignore in reduce case
+	Task    int    // task number
+	nReduce int    // number of reducers, important for hashing
+	reducerNum int // which reducer I am
 }
 
 type SignalFileReadyArgs struct {
 	Mapper bool   // true if map, false if reduce
 	Orig   string // original file name if mapping hash if reducing
 	Task   int    // task number
-	Oname  string // output file name
 }
 
 type SignalFileReadyReply struct{}

@@ -11,6 +11,7 @@ import (
 
 type Coordinator struct {
 	// Your definitions here.
+	nReduce int
 
 	autoinc                int
 	filesWaitingMap        []string
@@ -86,7 +87,7 @@ func (c *Coordinator) Done() bool {
 // main/mrcoordinator.go calls this function.
 // nReduce is the number of reduce tasks to use.
 func MakeCoordinator(sockname string, files []string, nReduce int) *Coordinator {
-	c := Coordinator{filesProgressingMap: make(map[string]int), filesProgressingReduce: make(map[string]int)}
+	c := Coordinator{nReduce: nReduce, filesProgressingMap: make(map[string]int), filesProgressingReduce: make(map[string]int)}
 
 	// Your code here.
 	c.filesWaitingMap = files
