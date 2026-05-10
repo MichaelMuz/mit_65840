@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"strings"
 	"time"
 )
 
@@ -25,26 +26,7 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-var coordSockName string // socket for coordinator
-
-// main/mrworker.go calls this function.
-func Worker(sockname string, mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
-
-	coordSockName = sockname
-	// uncomment to send the Example RPC to the coordinator.
-	CallExample()
-
-	// Your worker implementation here.
-
-	// We are given the map/reduce function here, we don't know if we are a map or reduce worker yet
-
-	// Worker needs to:
-	// 1. Reach out to coordinator and ask for tasks, coordinator will give it a file name and whether to map or reduce
-	// 2. map on that input
-	// 3. At the end sort the outputs into intermediate files. name mr-X-Y where X is map task number and Y is reduce task number
-	filename, task := GetWork()
-
+func handleMap(mapf func(string, string) []KeyValue, filename string, task int) {
 	file, err := os.Open(filename)
 	if err != nil {
 		log.Fatalf("cannot open %v", filename)
@@ -76,11 +58,70 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 		log.Fatalf("%v", err)
 	}
 
-	signalDone(filename, task, oname)
+	signalDone(true, filename, task, oname)
+}
+
+func handleReduce(reducef func(string, []string) string, hash string, task int) {
+	// collect all the files that I need
+	dir, err := os.ReadDir(".")
+	if err != nil {
+		log.Fatalf("%v", err)
+	}
+	// kvs := []KeyValue{}
+	kvs := map[string][]string{}
+	for _, de := range dir {
+		if de.IsDir() {
+			continue
+		}
+		if spl := strings.Split(de.Name(), "-"); spl[len(spl)-1] != hash {
+			continue
+		}
+		bytes, err := os.ReadFile(de.Name())
+
+		kv := KeyValue{}
+		err = json.Unmarshal(bytes, &kv)
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
+
+		slc, exists := kvs[kv.Key]
+		if !exists {
+			slc = []string{}
+			kvs[kv.Key] = slc
+		}
+		kvs[kv.Key] = append(kvs[kv.Key], kv.Value)
+	}
 
 }
 
-func GetWork() (string, int) {
+var coordSockName string // socket for coordinator
+
+// main/mrworker.go calls this function.
+func Worker(sockname string, mapf func(string, string) []KeyValue,
+	reducef func(string, []string) string) {
+
+	coordSockName = sockname
+	// uncomment to send the Example RPC to the coordinator.
+	CallExample()
+
+	// Your worker implementation here.
+
+	// We are given the map/reduce function here, we don't know if we are a map or reduce worker yet
+
+	// Worker needs to:
+	// 1. Reach out to coordinator and ask for tasks, coordinator will give it a file name and whether to map or reduce
+	// 2. map on that input
+	// 3. At the end sort the outputs into intermediate files. name mr-X-Y where X is map task number and Y is reduce task number
+	mapper, filename, task := GetWork()
+	if mapper {
+		handleMap(mapf, filename, task)
+	} else {
+		handleReduce(reducef, filename, task)
+	}
+
+}
+
+func GetWork() (bool, string, int) {
 	args := WorkRequestArgs{}
 	reply := WorkRequestReply{}
 	for {
@@ -96,11 +137,11 @@ func GetWork() (string, int) {
 			break
 		}
 	}
-	return reply.File, reply.Task
+	return reply.Mapper, reply.File, reply.Task
 }
 
-func signalDone(orig string, task int, oname string) {
-	args := SignalFileReadyArgs{orig, task, oname}
+func signalDone(mapper bool, orig string, task int, oname string) {
+	args := SignalFileReadyArgs{mapper, orig, task, oname}
 	reply := SignalFileReadyReply{}
 	ok := call("Coordinator.SignalFinished", &args, &reply)
 	if !ok {
