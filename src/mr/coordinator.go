@@ -10,17 +10,6 @@ import (
 	"time"
 )
 
-// plan:
-// There will be a work queue formed by a channel
-// The Request work function will read the next thing from the channel
-// It will need to push it into a monitoring work channel where a persistent go routine is gonna check
-//    if any machines have fallen too behind then push back into the work queue channel
-//    Anything that truly finished will have that task pushed into a finished channel
-// Once all the mapping tasks are signaled to be done (the finished channel is the same of num files)
-//    we will push all the reduce tasks into the todo channel to be handed out
-//
-// This is similar to what I did initially with the slices but with channels
-
 type TsWork struct {
 	task WorkRequestReply
 	ts   time.Time
@@ -60,15 +49,6 @@ func (c *Coordinator) RequestWork(args *WorkRequestArgs, reply *WorkRequestReply
 
 func (c *Coordinator) SignalFinished(arg *SignalFileReadyArgs, reply *SignalFileReadyReply) error {
 	c.completedIds <- arg.uuid
-	// _, in := c.filesProgressingMap[arg.Orig]
-	// if !in {
-	// 	fmt.Printf("laggard finished %v too late", arg.Orig)
-	// 	return nil
-	// }
-	// delete(c.filesProgressingMap, arg.Orig)
-	// c.filesWaitingReduce = append(c.filesWaitingReduce, arg.Orig)
-	// fmt.Printf("file %v processed by task %v, intermediate", arg.Orig, arg.Task)
-
 	return nil
 }
 

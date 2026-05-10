@@ -179,6 +179,7 @@ func GetWork() (int, bool, string, int, int) {
 }
 
 func signalDone(uuid int) {
+	fmt.Printf("Gonna signal done \n")
 	args := SignalFileReadyArgs{uuid}
 	reply := SignalFileReadyReply{}
 	ok := call("Coordinator.SignalFinished", &args, &reply)

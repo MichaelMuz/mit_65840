@@ -33,5 +33,4 @@ type WorkRequestReply struct {
 type SignalFileReadyArgs struct {
 	uuid int
 }
-
 type SignalFileReadyReply struct{}
