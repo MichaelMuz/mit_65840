@@ -37,10 +37,11 @@ func (c *Coordinator) SignalFinished(arg *SignalFileReadyArgs, reply *SignalFile
 
 func (c *Coordinator) RequestWork(args *WorkRequestArgs, reply *WorkRequestReply) error {
 	if len(c.filesWaitingMap) == 0 {
-		reply.File = ""
+		reply.Ready = false
 		return nil
 	}
 
+	reply.Ready = true
 	reply.Mapper = true
 	reply.TotalReducers = c.nReduce
 

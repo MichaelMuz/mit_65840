@@ -166,7 +166,7 @@ func GetWork() (int, bool, string, int, int) {
 			fmt.Printf("call failed!\n")
 		}
 
-		if len(reply.File) == 0 {
+		if !reply.Ready {
 			time.Sleep(1 * time.Second)
 		} else {
 			fmt.Printf("Task %v assigned to work on %v\n", reply.Task, reply.File)
