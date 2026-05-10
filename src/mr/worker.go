@@ -65,6 +65,10 @@ func handleMap(mapf func(string, string) []KeyValue, filename string, task int, 
 		if err != nil {
 			log.Fatalf("Failed to encode to json post map: %v", err)
 		}
+
+		if err := ofile.Close(); err != nil {
+			log.Fatalf("%v", err)
+		}
 		os.Rename(tmpName, oname)
 	}
 
@@ -118,7 +122,7 @@ func handleReduce(reducef func(string, []string) string, reducerNum int, uuid in
 
 	oname := fmt.Sprintf("mr-out-%v", reducerNum)
 	onameTmp := fmt.Sprintf("%v-tmp", oname)
-	ofile, err := os.Create(oname)
+	ofile, err := os.Create(onameTmp)
 	if err != nil {
 		log.Fatalf("%v", err)
 	}
@@ -169,14 +173,11 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 func GetWork() (int, bool, string, int, int, bool) {
 	args := WorkRequestArgs{}
 	reply := WorkRequestReply{}
-	fails := 0
 	for {
 		ok := call("Coordinator.RequestWork", &args, &reply)
 		if !ok {
 			fmt.Printf("call failed!\n")
-			if fails >= 10 {
-				return 0, false, "", 0, 0, false
-			}
+			break
 		}
 
 		if !reply.Ready {

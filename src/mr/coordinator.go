@@ -58,6 +58,7 @@ func (c *Coordinator) SignalFinished(arg *SignalFileReadyArgs, reply *SignalFile
 
 // keeps track of pending tasks and pushes them back on work queue if not done fast enough
 func (c *Coordinator) controller() {
+	ticker := time.Tick(time.Second)
 	pending := map[int]TsWork{}
 	for {
 		select {
@@ -69,7 +70,7 @@ func (c *Coordinator) controller() {
 				delete(pending, co)
 				c.finished <- tsk.task
 			}
-		default:
+		case  <-ticker:
 			t := time.Now()
 			for k, v := range pending {
 				if t.Sub(v.ts) > time.Second*10 {
@@ -78,7 +79,6 @@ func (c *Coordinator) controller() {
 					c.tasks <- v.task
 				}
 			}
-			time.Sleep(time.Second)
 		}
 	}
 }
@@ -130,7 +130,7 @@ func (c *Coordinator) run(files []string, nReduce int) {
 
 	fmt.Println("All tasks finished")
 
-	// waste to use an atomic here bc we could just write to a regular boolean but go --race thinks it is a data race
+	// even though we always have one reader and one writer of this bool, go may perform optimizations etc
 	c.done.Store(true)
 }
 
