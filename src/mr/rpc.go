@@ -31,6 +31,6 @@ type WorkRequestReply struct {
 }
 
 type SignalFileReadyArgs struct {
-	uuid int
+	Uuid int
 }
 type SignalFileReadyReply struct{}

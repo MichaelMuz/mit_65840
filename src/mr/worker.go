@@ -179,7 +179,6 @@ func GetWork() (int, bool, string, int, int) {
 }
 
 func signalDone(uuid int) {
-	fmt.Printf("Gonna signal done \n")
 	args := SignalFileReadyArgs{uuid}
 	reply := SignalFileReadyReply{}
 	ok := call("Coordinator.SignalFinished", &args, &reply)
@@ -228,7 +227,8 @@ func call(rpcname string, args any, reply any) bool {
 	}
 	defer c.Close()
 
-	if err := c.Call(rpcname, args, reply); err == nil {
+	err = c.Call(rpcname, args, reply)
+	if err == nil {
 		return true
 	}
 	log.Printf("%d: call failed err %v", os.Getpid(), err)

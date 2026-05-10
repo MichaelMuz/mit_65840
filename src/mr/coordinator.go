@@ -48,7 +48,7 @@ func (c *Coordinator) RequestWork(args *WorkRequestArgs, reply *WorkRequestReply
 }
 
 func (c *Coordinator) SignalFinished(arg *SignalFileReadyArgs, reply *SignalFileReadyReply) error {
-	c.completedIds <- arg.uuid
+	c.completedIds <- arg.Uuid
 	return nil
 }
 
