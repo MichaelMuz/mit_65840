@@ -63,7 +63,7 @@ func handleMap(mapf func(string, string) []KeyValue, filename string, task int, 
 		enc := json.NewEncoder(ofile)
 		err = enc.Encode(&slc)
 		if err != nil {
-			log.Fatalf("%v", err)
+			log.Fatalf("Failed to encode to json post map: %v", err)
 		}
 		os.Rename(tmpName, oname)
 	}
@@ -85,15 +85,18 @@ func handleReduce(reducef func(string, []string) string, reducerNum int, uuid in
 		if de.IsDir() {
 			continue
 		}
-		if spl := strings.Split(de.Name(), "-"); spl[len(spl)-1] != rNumSt {
+
+		// map intermediate files are mr-num-num, don't wanna read mr-out-num bc those are reduce outputs
+		if spl := strings.Split(de.Name(), "-"); len(spl) != 3 || spl[1] == "out" || spl[len(spl)-1] != rNumSt {
 			continue
 		}
+
 		bytes, err := os.ReadFile(de.Name())
 
 		slc := []KeyValue{}
 		err = json.Unmarshal(bytes, &slc)
 		if err != nil {
-			log.Fatalf("%v", err)
+			log.Fatalf("Failed to read json from %v in reduce: %v", de.Name(), err)
 		}
 
 		for _, pair := range slc {
