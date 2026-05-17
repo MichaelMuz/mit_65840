@@ -29,7 +29,14 @@ type KVServer struct {
 // Get returns the value and version for args.Key, if args.Key
 // exists. Otherwise, Get returns ErrNoKey.
 func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
-	// Your code here.
+	e, ok := kv.kv[args.Key]
+	if !ok {
+		reply.Err = rpc.ErrNoKey
+	} else {
+		reply.Value = e.val
+		reply.Version = e.version
+		reply.Err = rpc.OK
+	}
 }
 
 // Update the value for a key if args.Version matches the version of
