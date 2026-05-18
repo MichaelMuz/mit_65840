@@ -2,9 +2,6 @@ package kvsrv
 
 import (
 	"log"
-	"net"
-	"net/http"
-	netrpc "net/rpc"
 	"sync"
 
 	"6.5840/kvsrv1/rpc"
@@ -14,28 +11,26 @@ import (
 
 // You can ignore all arguments; they are for replicated KVservers
 func StartKVServer(tc *tester.TesterClnt, ends []*labrpc.ClientEnd, gid tester.Tgid, srv int, persister *tester.Persister) []any {
+	log.SetFlags(log.Lshortfile)
+
 	kv := MakeKVServer()
 	return []any{kv}
 }
 
 func MakeKVServer() *KVServer {
-	kv := &KVServer{} // no need to worry ab this being stack alloc with dangling pointer bc go knows unlike C
-	if err := netrpc.Register(kv); err != nil {
-		log.Fatal("Couldn't register:", err)
-	}
-	netrpc.HandleHTTP()
-	l, err := net.Listen("tcp", ":1234")
-	if err != nil {
-		log.Fatal("Listen error:", err)
-	}
-	go func() {
-		if err := http.Serve(l, nil); err != nil {
-			log.Fatal("Serve error: ", err)
-		}
-	}()
+	// no need to worry ab this being stack alloc with dangling pointer bc go knows unlike C
+	kv := &KVServer{kv: make(map[string]value)}
 	return kv
 }
 
+const Debug = false
+
+func DPrintf(format string, a ...any) (n int, err error) {
+	if Debug {
+		log.Printf(format, a...)
+	}
+	return
+}
 
 type value struct {
 	val     string
@@ -50,6 +45,9 @@ type KVServer struct {
 // Get returns the value and version for args.Key, if args.Key
 // exists. Otherwise, Get returns ErrNoKey.
 func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
+	DPrintf("Server get got: %#v %#v", args, reply)
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
 	e, ok := kv.kv[args.Key]
 	if !ok {
 		reply.Err = rpc.ErrNoKey
@@ -58,6 +56,7 @@ func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
 		reply.Version = e.version
 		reply.Err = rpc.OK
 	}
+	DPrintf("Server get returning: %#v", reply)
 }
 
 // Update the value for a key if args.Version matches the version of
@@ -65,6 +64,7 @@ func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
 // If the key doesn't exist, Put installs the value if the
 // args.Version is 0, and returns ErrNoKey otherwise.
 func (kv *KVServer) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
+	DPrintf("Server put %#v %#v", args, reply)
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	e, ok := kv.kv[args.Key]
@@ -77,10 +77,12 @@ func (kv *KVServer) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
 		}
 	} else {
 		if args.Version == 0 {
-			kv.kv[args.Key] = value{args.Value, 0}
+			kv.kv[args.Key] = value{args.Value, 1}
 			reply.Err = rpc.OK
 		} else {
 			reply.Err = rpc.ErrNoKey
 		}
 	}
+
+	DPrintf("Server put returning %#v", args)
 }
