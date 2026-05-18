@@ -9,7 +9,7 @@ import (
 	// "sync/atomic"
 )
 
-const Debug = true
+const Debug = false
 
 func DPrintf(format string, a ...any) (n int, err error) {
 	if Debug {
@@ -44,11 +44,13 @@ const unlocked = "unlocked"
 // lockname argument; locks with different names should be
 // independent.
 func MakeLock(ck kvtest.IKVClerk, lockname string) *Lock {
+	DPrintf("Attempting make lock, lockname: %v", lockname)
 	err := ck.Put(lockname, unlocked, 0)
 	if err == rpc.ErrNoKey {
 		log.Fatal("Impossible state, no key on init but we used 0")
 	} else if err == rpc.ErrVersion {
-		log.Fatal("Attempt to create existing lock")
+		// Distributed lock so many clients will try to make the same one, this is ok
+		DPrintf("Already initialized by another client lockname: %v", lockname)
 	} else if err != rpc.OK {
 		log.Fatalf("Impossible state, err: %v", err)
 	}
@@ -106,13 +108,14 @@ func (lk *Lock) Release() {
 
 	err = lk.ck.Put(lk.name, unlocked, ver)
 
-	if err == rpc.ErrNoKey {
+	switch err {
+	case rpc.ErrNoKey:
 		log.Fatal("Impossible state, get worked but put says no key")
-	} else if err == rpc.ErrVersion {
+	case rpc.ErrVersion:
 		log.Fatalf("Unauthorized lock access of %v", lk.name)
-	} else if err == rpc.OK {
+	case rpc.OK:
 		DPrintf("Released lock: %v", lk.name)
-	} else {
+	default:
 		log.Fatalf("Impossible state, err: %v", err)
 	}
 }
