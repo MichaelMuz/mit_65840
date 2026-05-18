@@ -12,7 +12,30 @@ import (
 	"6.5840/tester1"
 )
 
-const Debug = false
+// You can ignore all arguments; they are for replicated KVservers
+func StartKVServer(tc *tester.TesterClnt, ends []*labrpc.ClientEnd, gid tester.Tgid, srv int, persister *tester.Persister) []any {
+	kv := MakeKVServer()
+	return []any{kv}
+}
+
+func MakeKVServer() *KVServer {
+	kv := &KVServer{} // no need to worry ab this being stack alloc with dangling pointer bc go knows unlike C
+	if err := netrpc.Register(kv); err != nil {
+		log.Fatal("Couldn't register:", err)
+	}
+	netrpc.HandleHTTP()
+	l, err := net.Listen("tcp", ":1234")
+	if err != nil {
+		log.Fatal("Listen error:", err)
+	}
+	go func() {
+		if err := http.Serve(l, nil); err != nil {
+			log.Fatal("Serve error: ", err)
+		}
+	}()
+	return kv
+}
+
 
 type value struct {
 	val     string
@@ -21,8 +44,6 @@ type value struct {
 
 type KVServer struct {
 	mu sync.Mutex
-
-	// Your definitions here.
 	kv map[string]value
 }
 
@@ -62,28 +83,4 @@ func (kv *KVServer) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
 			reply.Err = rpc.ErrNoKey
 		}
 	}
-}
-
-func MakeKVServer() *KVServer {
-	kv := &KVServer{} // no need to worry ab this being stack alloc with dangling pointer bc go knows unlike C
-	if err := netrpc.Register(kv); err != nil {
-		log.Fatal("Couldn't register:", err)
-	}
-	netrpc.HandleHTTP()
-	l, err := net.Listen("tcp", ":1234")
-	if err != nil {
-		log.Fatal("Listen error:", err)
-	}
-	go func() {
-		if err := http.Serve(l, nil); err != nil {
-			log.Fatal("Serve error: ", err)
-		}
-	}()
-	return kv
-}
-
-// You can ignore all arguments; they are for replicated KVservers
-func StartKVServer(tc *tester.TesterClnt, ends []*labrpc.ClientEnd, gid tester.Tgid, srv int, persister *tester.Persister) []any {
-	kv := MakeKVServer()
-	return []any{kv}
 }
