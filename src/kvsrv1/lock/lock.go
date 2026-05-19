@@ -6,7 +6,7 @@ import (
 
 	"6.5840/kvsrv1/rpc"
 	"6.5840/kvtest1"
-	// "sync/atomic"
+	"sync/atomic"
 )
 
 const Debug = false
@@ -30,12 +30,12 @@ type Lock struct {
 	ck kvtest.IKVClerk
 	// You may add code here
 	name string
+	id   string
 }
 
-const locked = "locked"
-const unlocked = "unlocked"
+const unlocked = ""
 
-// var autoinc = atomic.Uint64{}
+var autoinc = atomic.Uint64{}
 
 // The tester calls MakeLock() and passes in a k/v clerk; your code can
 // perform a Put or Get by calling lk.ck.Put() or lk.ck.Get().
@@ -51,10 +51,15 @@ func MakeLock(ck kvtest.IKVClerk, lockname string) *Lock {
 	} else if err == rpc.ErrVersion {
 		// Distributed lock so many clients will try to make the same one, this is ok
 		DPrintf("Already initialized by another client lockname: %v", lockname)
+	} else if err == rpc.ErrMaybe {
+		DPrintf("Error maybe still guarentees existence lockname: %v", lockname)
 	} else if err != rpc.OK {
 		log.Fatalf("Impossible state, err: %v", err)
 	}
-	return &Lock{ck: ck, name: lockname}
+
+	l := &Lock{ck: ck, name: lockname, id: string(autoinc.Load())}
+	autoinc.Add(1)
+	return l
 }
 
 func (lk *Lock) Acquire() {
@@ -65,17 +70,14 @@ func (lk *Lock) Acquire() {
 			log.Fatal("Attempt to acquire non-existent lock")
 		} else if err != rpc.OK {
 			log.Fatalf("Impossible state, err: %v", err)
-		} else if val == locked {
+		} else if val != unlocked {
 			DPrintf("Already aquired, sleeping. lockname: %v", lk.name)
 			time.Sleep(time.Second)
 			continue
-		} else if val != unlocked {
-			log.Fatal("Impossible state, lock is neither locked nor unlocked")
 		}
-
 		DPrintf("Unlocked, lockname: %v", lk.name)
 
-		err = lk.ck.Put(lk.name, locked, ver)
+		err = lk.ck.Put(lk.name, lk.id, ver)
 
 		if err == rpc.ErrNoKey {
 			log.Fatal("Impossible state, get worked but put says no key")
@@ -86,8 +88,16 @@ func (lk *Lock) Acquire() {
 		} else if err == rpc.OK {
 			DPrintf("Aquired lock: %v", lk.name)
 			break
-		} else {
+		} else if err != rpc.ErrMaybe {
 			log.Fatalf("Impossible state, err: %v", err)
+		}
+
+		// Now we might have the lock or not. We basically need to ask the server what the value is
+		// to check if our client has the lock or not. Check is simple, just validate our assumptions with the get
+		// it should be the next version locked with our id and no errors
+		val, currVer, err := lk.ck.Get(lk.name)
+		if err == rpc.OK && currVer == ver+1 && val == lk.id {
+			break
 		}
 	}
 }
