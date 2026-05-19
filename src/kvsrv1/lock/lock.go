@@ -72,7 +72,7 @@ func (lk *Lock) Acquire() {
 			log.Fatalf("Impossible state, err: %v", err)
 		} else if val != unlocked {
 			DPrintf("Already aquired, sleeping. lockname: %v", lk.name)
-			time.Sleep(time.Second)
+			time.Sleep(time.Millisecond * 10)
 			continue
 		}
 		DPrintf("Unlocked, lockname: %v", lk.name)
@@ -83,7 +83,7 @@ func (lk *Lock) Acquire() {
 			log.Fatal("Impossible state, get worked but put says no key")
 		} else if err == rpc.ErrVersion {
 			DPrintf("Just aquired by another, sleeping. lockhame: %v", lk.name)
-			time.Sleep(time.Second)
+			time.Sleep(time.Millisecond * 10)
 			continue
 		} else if err == rpc.OK {
 			DPrintf("Aquired lock: %v", lk.name)
