@@ -2,11 +2,13 @@ package lock
 
 import (
 	"log"
+	"strconv"
 	"time"
+
+	"sync/atomic"
 
 	"6.5840/kvsrv1/rpc"
 	"6.5840/kvtest1"
-	"sync/atomic"
 )
 
 const Debug = false
@@ -57,7 +59,7 @@ func MakeLock(ck kvtest.IKVClerk, lockname string) *Lock {
 		log.Fatalf("Impossible state, err: %v", err)
 	}
 
-	l := &Lock{ck: ck, name: lockname, id: string(autoinc.Load())}
+	l := &Lock{ck: ck, name: lockname, id: strconv.FormatUint(autoinc.Load(), 10)}
 	autoinc.Add(1)
 	return l
 }
@@ -70,8 +72,10 @@ func (lk *Lock) Acquire() {
 			log.Fatal("Attempt to acquire non-existent lock")
 		} else if err != rpc.OK {
 			log.Fatalf("Impossible state, err: %v", err)
+		} else if val == lk.id {
+			log.Fatalf("Already held by us, could be noop, lockname: %v", lk.name)
 		} else if val != unlocked {
-			DPrintf("Already aquired, sleeping. lockname: %v", lk.name)
+			DPrintf("Already aquired by other client, sleeping. lockname: %v", lk.name)
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
@@ -105,27 +109,36 @@ func (lk *Lock) Acquire() {
 func (lk *Lock) Release() {
 	DPrintf("Attempting release, lockname: %v", lk.name)
 
-	val, ver, err := lk.ck.Get(lk.name)
-	if err == rpc.ErrNoKey {
-		log.Fatal("Attempt to release non-existent lock")
-	} else if err != rpc.OK {
-		log.Fatalf("Impossible state, err: %v", err)
-	} else if val == unlocked {
-		log.Fatalf("Attempt to release unlocked lock %v", lk.name)
-	} else if val != locked {
-		log.Fatal("Impossible state, lock is neither locked nor unlocked")
-	}
+	for {
 
-	err = lk.ck.Put(lk.name, unlocked, ver)
+		val, ver, err := lk.ck.Get(lk.name)
+		if err == rpc.ErrNoKey {
+			log.Fatal("Attempt to release non-existent lock")
+		} else if err != rpc.OK {
+			log.Fatalf("Impossible state, err: %v", err)
+		} else if val == unlocked {
+			log.Fatalf("Attempt to release unlocked lock %v, could be noop", lk.name)
+		} else if val != lk.id {
+			log.Fatal("Attempt to release lock owned by someone else")
+		}
 
-	switch err {
-	case rpc.ErrNoKey:
-		log.Fatal("Impossible state, get worked but put says no key")
-	case rpc.ErrVersion:
-		log.Fatalf("Unauthorized lock access of %v", lk.name)
-	case rpc.OK:
-		DPrintf("Released lock: %v", lk.name)
-	default:
-		log.Fatalf("Impossible state, err: %v", err)
+		err = lk.ck.Put(lk.name, unlocked, ver)
+
+		if err == rpc.ErrNoKey {
+			log.Fatal("Impossible state, get worked but put says no key")
+		} else if err == rpc.ErrVersion {
+			log.Fatalf("Unauthorized lock access of %v", lk.name)
+		} else if err == rpc.OK {
+			DPrintf("Released lock: %v", lk.name)
+			break
+		} else if err != rpc.ErrMaybe {
+			log.Fatalf("Impossible state, err: %v", err)
+		}
+
+		// now we may have just released it, we need to check if we still hold the lock and retry if we hold it
+		val, currVer, err := lk.ck.Get(lk.name)
+		if err != rpc.OK || currVer != ver || val != lk.id {
+			break
+		}
 	}
 }
