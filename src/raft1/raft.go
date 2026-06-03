@@ -51,13 +51,6 @@ type Raft struct {
 	matchIndex []int
 }
 
-func (rf *Raft) reset() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	rf.leaderLease = time.Now()
-}
-
 func (rf *Raft) others() iter.Seq2[int, *labrpc.ClientEnd] {
 	return func(yield func(int, *labrpc.ClientEnd) bool) {
 		for i, p := range rf.peers {
@@ -131,7 +124,6 @@ type RequestVoteReply struct {
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 
 	lastLogIndex := len(rf.log) - 1
 	lastLogTerm := rf.log[lastLogIndex].Term
@@ -140,16 +132,20 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	if args.Term > rf.currentTerm &&
 		(rf.votedFor == -1 || rf.votedFor == args.CandidateId) &&
 		(args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex > lastLogIndex)) {
+		rf.currentTerm = args.Term
+		rf.votedFor = args.CandidateId
 		reply.VoteGranted = true
 	} else {
 		reply.VoteGranted = false
 	}
+
+	rf.mu.Unlock()
+	if reply.VoteGranted {
+		rf.persist()
+	}
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
 }
@@ -170,7 +166,6 @@ type AppendEntriesReply struct {
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
-	defer rf.mu.Unlock()
 
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm || len(rf.log) < args.PrevLogIndex || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
@@ -180,13 +175,11 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.commitIndex = min(len(rf.log)-1, args.LeaderCommit)
 		rf.leader = args.LeaderId
 	}
+	rf.mu.Unlock()
+	rf.persist()
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-	// TODO: careful with these? Don't wanna hold lock through call
-
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
 }
