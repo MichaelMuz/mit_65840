@@ -161,6 +161,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.commitIndex = min(len(rf.log)-1, args.LeaderCommit)
 		rf.leader = args.LeaderId
 	}
+
 	rf.mu.Unlock()
 	rf.persist()
 }
