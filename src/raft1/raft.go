@@ -64,13 +64,6 @@ func (rf *Raft) others() iter.Seq2[int, *labrpc.ClientEnd] {
 	}
 }
 
-func (rf *Raft) GetState() (int, bool) {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	return rf.currentTerm, rf.state == Leader
-}
-
 func (rf *Raft) persist() {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
@@ -98,13 +91,6 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.PersistentState = s
 	}
 
-}
-
-func (rf *Raft) PersistBytes() int {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	return rf.persister.RaftStateSize()
 }
 
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
@@ -184,13 +170,6 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
-func (rf *Raft) Start(command any) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
-	return index, term, isLeader
-}
-
 func (rf *Raft) candidateLoop() {
 	for {
 		dur := time.Duration(50+(rand.Int63()%300)) * time.Millisecond
@@ -263,6 +242,7 @@ func (rf *Raft) candidateLoop() {
 
 func (rf *Raft) peerHeartBeat(i int) {
 	for {
+		time.Sleep(200 * time.Millisecond)
 		needsMore := true
 		for needsMore {
 			needsMore = false
@@ -294,18 +274,8 @@ func (rf *Raft) peerHeartBeat(i int) {
 			}
 			rf.mu.Unlock()
 		}
-		time.Sleep(200 * time.Millisecond)
 	}
 
-}
-
-func (rf *Raft) startHeartBeats() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
-	for i := range rf.others() {
-		go rf.peerHeartBeat(i)
-	}
 }
 
 func Make(peers []*labrpc.ClientEnd, me int,
@@ -316,12 +286,32 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	mu.Lock()
 	ps := PersistentState{votedFor: -1, log: []LogEntry{{Term: -1}}}
 	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now()}
+	go rf.candidateLoop()
+	for i := range rf.others() {
+		go rf.peerHeartBeat(i)
+	}
 	mu.Unlock()
 
 	rf.readPersist(persister.ReadRaftState())
-
-	go rf.startHeartBeats()
-	go rf.candidateLoop()
-
 	return rf
+}
+
+func (rf *Raft) PersistBytes() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	return rf.persister.RaftStateSize()
+}
+
+func (rf *Raft) GetState() (int, bool) {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	return rf.currentTerm, rf.state == Leader
+}
+func (rf *Raft) Start(command any) (int, int, bool) {
+	index := -1
+	term := -1
+	isLeader := true
+	return index, term, isLeader
 }
