@@ -259,7 +259,7 @@ func (rf *Raft) candidateLoop() {
 
 func (rf *Raft) peerHeartBeat(i int) {
 	for {
-		time.Sleep(200 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		needsMore := true
 		for needsMore {
 			needsMore = false
