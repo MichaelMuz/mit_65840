@@ -5,6 +5,7 @@ import (
 	"iter"
 	"log"
 	"math/rand"
+	"slices"
 	"sync"
 	"time"
 
@@ -24,6 +25,7 @@ const (
 
 type LogEntry struct {
 	Term  int
+	noop  bool
 	Value int
 }
 type PersistentState struct {
@@ -64,10 +66,8 @@ func (rf *Raft) others() iter.Seq2[int, *labrpc.ClientEnd] {
 	}
 }
 
+// assumed to be called with lock engaged
 func (rf *Raft) persist() {
-	rf.mu.Lock()
-	defer rf.mu.Unlock()
-
 	w := new(bytes.Buffer)
 	e := labgob.NewEncoder(w)
 	e.Encode(rf.PersistentState)
@@ -110,23 +110,21 @@ type RequestVoteReply struct {
 
 func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
 	lastLogIndex := len(rf.log) - 1
 	lastLogTerm := rf.log[lastLogIndex].Term
 
 	reply.Term = rf.currentTerm
-	if args.Term > rf.currentTerm &&
-		(rf.votedFor == -1 || rf.votedFor == args.CandidateId) &&
+	reply.VoteGranted = false
+
+	if args.Term > rf.currentTerm || (args.Term == rf.currentTerm && (rf.votedFor == -1 || rf.votedFor == args.CandidateId)) &&
 		(args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex > lastLogIndex)) {
 		rf.currentTerm = args.Term
+		rf.state = Follower
 		rf.votedFor = args.CandidateId
+		rf.leader = -1 // maybe wanna set this if term is bigger even if log isn't good
 		reply.VoteGranted = true
-	} else {
-		reply.VoteGranted = false
-	}
-
-	rf.mu.Unlock()
-	if reply.VoteGranted {
 		rf.persist()
 	}
 }
@@ -152,17 +150,27 @@ type AppendEntriesReply struct {
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
+	defer rf.mu.Unlock()
 
 	reply.Term = rf.currentTerm
-	if args.Term < rf.currentTerm || len(rf.log) < args.PrevLogIndex || rf.log[args.PrevLogIndex].Term != args.PrevLogTerm {
-		reply.Success = false
-	} else {
-		rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
-		rf.commitIndex = min(len(rf.log)-1, args.LeaderCommit)
-		rf.leader = args.LeaderId
+	reply.Success = false
+
+	if args.Term < rf.currentTerm {
+		return
 	}
 
-	rf.mu.Unlock()
+	rf.currentTerm = args.Term
+	rf.state = Follower
+	rf.votedFor = args.LeaderId // didn't vote but don't hand out vote for this term anymore
+	rf.leader = args.LeaderId
+	rf.leaderLease = time.Now()
+
+	if len(rf.log) > args.PrevLogIndex && rf.log[args.PrevLogIndex].Term == args.PrevLogTerm {
+		rf.log = append(rf.log[:args.PrevLogIndex+1], args.Entries...)
+		rf.commitIndex = min(len(rf.log)-1, args.LeaderCommit)
+		reply.Success = true
+	}
+
 	rf.persist()
 }
 
@@ -171,6 +179,9 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
+// this thing knows when we turn to a leader so maybe we should go call the heartbeats here
+// then they can return if they notice we are not the leader, but then we would need to cancel
+// technically we are supposed to reset timer right after we start election and bail early if chimes
 func (rf *Raft) candidateLoop() {
 	for {
 		dur := time.Duration(50+(rand.Int63()%300)) * time.Millisecond
@@ -183,6 +194,8 @@ func (rf *Raft) candidateLoop() {
 
 		rf.state = Candidate
 		rf.currentTerm++
+		rf.votedFor = rf.me // vote for ourselves this term
+		rf.leader = -1
 
 		li := len(rf.log) - 1
 		lt := rf.log[li].Term
@@ -234,6 +247,9 @@ func (rf *Raft) candidateLoop() {
 				rf.matchIndex[i] = 0
 			}
 			rf.state = Leader
+			rf.leader = rf.me
+			// add noop log so we can commit from prev turn without edge cases
+			rf.log = append(rf.log, LogEntry{rf.currentTerm, true, 0})
 		} else {
 			rf.state = Follower
 		}
@@ -261,14 +277,23 @@ func (rf *Raft) peerHeartBeat(i int) {
 			ok := rf.sendAppendEntries(i, &a, &r)
 
 			rf.mu.Lock()
-			if !ok {
-				needsMore = true
-			}
+
 			if rf.state != Leader {
+			} else if !ok {
+				needsMore = true
 			} else if r.Success {
 				rf.nextIndex[i] = len(rf.log)
+				rf.matchIndex[i] = len(rf.log) - 1
+				// could have just achieved majority, update commited
+				srt := slices.Sorted(slices.Values(rf.matchIndex))
+				slices.Reverse(srt)
+				// we always add a noop log as soon as we are leader so we know our term is at the top so prev term edge case doesn't exist
+				rf.commitIndex = srt[len(rf.peers)/2+1]
 			} else if r.Term > rf.currentTerm {
+				rf.currentTerm = r.Term
 				rf.state = Follower
+				rf.votedFor = -1
+				rf.leader = -1
 			} else {
 				rf.nextIndex[i]--
 				needsMore = true
@@ -276,7 +301,6 @@ func (rf *Raft) peerHeartBeat(i int) {
 			rf.mu.Unlock()
 		}
 	}
-
 }
 
 func Make(peers []*labrpc.ClientEnd, me int,
@@ -285,8 +309,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	mu := sync.Mutex{}
 
 	mu.Lock()
-	ps := PersistentState{votedFor: -1, log: []LogEntry{{Term: -1}}}
-	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now()}
+	ps := PersistentState{votedFor: -1, log: []LogEntry{{-1, true, -1}}}
+	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1}
 	go rf.candidateLoop()
 	for i := range rf.others() {
 		go rf.peerHeartBeat(i)
