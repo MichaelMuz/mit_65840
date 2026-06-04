@@ -118,12 +118,16 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.Term = rf.currentTerm
 	reply.VoteGranted = false
 
-	if args.Term > rf.currentTerm || (args.Term == rf.currentTerm && (rf.votedFor == -1 || rf.votedFor == args.CandidateId)) &&
-		(args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex > lastLogIndex)) {
+	if args.Term < rf.currentTerm || (args.Term == rf.currentTerm && (rf.votedFor != -1 || rf.votedFor != args.CandidateId)) {
+		return
+	}
+
+	rf.leader = -1
+
+	if args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex > lastLogIndex) {
 		rf.currentTerm = args.Term
 		rf.state = Follower
 		rf.votedFor = args.CandidateId
-		rf.leader = -1 // maybe wanna set this if term is bigger even if log isn't good
 		reply.VoteGranted = true
 		rf.persist()
 	}
