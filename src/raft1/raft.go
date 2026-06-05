@@ -215,7 +215,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 // technically we are supposed to reset timer right after we start election and bail early if chimes
 func (rf *Raft) candidateLoop() {
 	for {
-		dur := time.Duration(1+(rand.Int63()%2)) * time.Second
+		dur := time.Duration(300+(rand.Int63()%150)) * time.Millisecond
 		time.Sleep(dur)
 		rf.mu.Lock()
 		if rf.state != Follower || time.Since(rf.leaderLease) < dur {
