@@ -150,7 +150,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 
-	rf.dbg("Sending RV from %v, with args: {Term: %v, LastLogIndex: %v, LastLogTerm} \n", server, args.Term, args.LastLogIndex, args.LastLogTerm)
+	rf.dbg("Sending RV from %v, with args: {Term: %v, LastLogIndex: %v, LastLogTerm: %v} \n", server, args.Term, args.LastLogIndex, args.LastLogTerm)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	rf.dbg("Sent RV from %v, ok=%v \n", server, ok)
 	return ok
@@ -204,9 +204,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 
-	rf.dbg("Sending AE to %v: {term: %v, LeaderId: %v, PrevLogIndex: %v, PrevLogTerm: %v, len(Entries): %v, LeaderCommit: %v} \n", server, args.Term, args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries), args.LeaderCommit)
+	// rf.dbg("Sending AE to %v: {term: %v, LeaderId: %v, PrevLogIndex: %v, PrevLogTerm: %v, len(Entries): %v, LeaderCommit: %v} \n", server, args.Term, args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries), args.LeaderCommit)
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
-	rf.dbg("Sending AE to %v, ok=%v \n", server, ok)
+	// rf.dbg("Sending AE to %v, ok=%v \n", server, ok)
 	return ok
 }
 
