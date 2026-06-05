@@ -120,7 +120,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	rf.dbg("Vote Requested (term:%v) by peer %v, with term %v \n", rf.CurrentTerm, args.CandidateId, args.Term)
+	rf.dbg("Incoming RV (my term:%v) by peer %v, with term %v \n", rf.CurrentTerm, args.CandidateId, args.Term)
 
 	lastLogIndex := len(rf.Log) - 1
 	lastLogTerm := rf.Log[lastLogIndex].Term
@@ -129,7 +129,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.VoteGranted = false
 
 	if args.Term < rf.CurrentTerm || (args.Term == rf.CurrentTerm && (rf.VotedFor != -1 || rf.VotedFor != args.CandidateId)) {
-		rf.dbg("Rejected vote request on term: term:%v by peer %v, with term %v, my term: %v, votedFor: %v \n", rf.CurrentTerm, args.CandidateId, args.Term, rf.CurrentTerm, rf.VotedFor)
+		rf.dbg("Rejected RV on term: term:%v by peer %v, with term %v, my term: %v, votedFor: %v \n", rf.CurrentTerm, args.CandidateId, args.Term, rf.CurrentTerm, rf.VotedFor)
 		return
 	}
 
@@ -142,16 +142,17 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.leader = args.CandidateId
 		reply.VoteGranted = true
 		rf.persist()
+		rf.dbg("Granted RV to peer %v", args.CandidateId)
 	} else {
-		rf.dbg("Rejected vote request on log: (lastTerm:%v, lastIndex:%v) by peer %v, with lastTerm %v, lastIndex: %v\n", lastLogTerm, lastLogIndex, args.CandidateId, args.LastLogTerm, args.LastLogIndex)
+		rf.dbg("Rejected RV on log: (lastTerm:%v, lastIndex:%v) by peer %v, with lastTerm %v, lastIndex: %v\n", lastLogTerm, lastLogIndex, args.CandidateId, args.LastLogTerm, args.LastLogIndex)
 	}
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 
-	rf.dbg("Requesting vote from %v, args: %v \n", server, args)
-
+	rf.dbg("Sending RV from %v, with args: {Term: %v, LastLogIndex: %v, LastLogTerm} \n", server, args.Term, args.LastLogIndex, args.LastLogTerm)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
+	rf.dbg("Sent RV from %v, ok=%v \n", server, ok)
 	return ok
 }
 
@@ -173,12 +174,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	rf.dbg("Seeing AE args: %v \n", args)
+	rf.dbg("Incoming AE: {term: %v, LeaderId: %v, PrevLogIndex: %v, PrevLogTerm: %v, len(Entries): %v, LeaderCommit: %v} \n", args.Term, args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries), args.LeaderCommit)
 
 	reply.Term = rf.CurrentTerm
 	reply.Success = false
 
 	if args.Term < rf.CurrentTerm {
+		rf.dbg("Rejected incoming AE on term, our %v > their %v \n", rf.CurrentTerm, args.Term)
 		return
 	}
 
@@ -192,16 +194,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.Log = append(rf.Log[:args.PrevLogIndex+1], args.Entries...)
 		rf.commitIndex = min(len(rf.Log)-1, args.LeaderCommit)
 		reply.Success = true
+		rf.persist()
+		rf.dbg("Accepted incoming AE from %v, commitIndex: %v, len(log): %v", rf.commitIndex, len(rf.Log))
+	} else {
+		rf.dbg("Temporarily rejected incoming AE on log, ours: (len(log): %v, PrevLogTerm: %v), theirs (PrevLogIndex: %v, PrevLogTerm: %v) \n", len(rf.Log), rf.Log[args.PrevLogIndex].Term, args.PrevLogIndex, args.PrevLogTerm)
 	}
 
-	rf.persist()
 }
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 
-	rf.dbg("Sending AE, args: %v \n", args)
-
+	rf.dbg("Sending AE to %v: {term: %v, LeaderId: %v, PrevLogIndex: %v, PrevLogTerm: %v, len(Entries): %v, LeaderCommit: %v} \n", server, args.Term, args.LeaderId, args.PrevLogIndex, args.PrevLogTerm, len(args.Entries), args.LeaderCommit)
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
+	rf.dbg("Sending AE to %v, ok=%v \n", server, ok)
 	return ok
 }
 
@@ -218,7 +223,7 @@ func (rf *Raft) candidateLoop() {
 			continue
 		}
 
-		rf.dbg("Becoming candidate, state: %v \n", rf.state)
+		rf.dbg("Becoming candidate \n")
 
 		rf.state = Candidate
 		rf.CurrentTerm++
@@ -235,10 +240,7 @@ func (rf *Raft) candidateLoop() {
 			a := &RequestVoteArgs{rf.CurrentTerm, rf.me, li, lt}
 			fs = append(fs, func() {
 				r := RequestVoteReply{}
-				ok := rf.sendRequestVote(i, a, &r)
-				if !ok {
-					rf.dbg("%v sending to %v failed", a.CandidateId, i)
-				}
+				_ = rf.sendRequestVote(i, a, &r)
 				reps <- &r // if we failed then no vote and term is 0, fine
 			})
 		}
@@ -324,7 +326,9 @@ func (rf *Raft) peerHeartBeat(i int) {
 	for {
 		select {
 		case <-time.After(200 * time.Millisecond):
+			// rf.dbg("Wokeup heartbeat to peer %v based on timer", i)
 		case <-rf.resetHeartBeats[i]:
+			// rf.dbg("Wokeup heartbeat to peer %v based on reset", i)
 		}
 
 		needsMore := true
@@ -336,8 +340,6 @@ func (rf *Raft) peerHeartBeat(i int) {
 				rf.mu.Unlock()
 				break
 			}
-
-			rf.dbg("Sending heartbeat from %v \n", i)
 
 			pi := rf.nextIndex[i] - 1
 			a := AppendEntriesArgs{rf.CurrentTerm, rf.me, pi, rf.Log[pi].Term, rf.Log[rf.nextIndex[i]:], rf.commitIndex}
