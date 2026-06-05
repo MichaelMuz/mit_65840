@@ -45,10 +45,10 @@ type Raft struct {
 	commitIndex int
 	lastApplied int
 
-	leader       int
-	leaderLease  time.Time
-	notifyLeader sync.Cond
-	state        EState
+	leader          int
+	leaderLease     time.Time
+	resetHeartBeats []chan struct{}
+	state           EState
 
 	nextIndex  []int
 	matchIndex []int
@@ -205,7 +205,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 // technically we are supposed to reset timer right after we start election and bail early if chimes
 func (rf *Raft) candidateLoop() {
 	for {
-		dur := time.Duration(50+(rand.Int63()%300)) * time.Millisecond
+		dur := time.Duration(1+(rand.Int63()%2)) * time.Second
 		time.Sleep(dur)
 		rf.mu.Lock()
 		if rf.state != Follower || time.Since(rf.leaderLease) < dur {
@@ -298,6 +298,14 @@ func (rf *Raft) candidateLoop() {
 			rf.leader = rf.me
 			// add noop log so we can commit from prev turn without edge cases
 			rf.Log = append(rf.Log, LogEntry{rf.CurrentTerm, true, 0})
+			for i := range len(rf.peers) {
+				select {
+				// send heartbeat immediately
+				// don't need this buffered bc if we are currently sending a heartbeat no need for another
+				case rf.resetHeartBeats[i] <- struct{}{}:
+				default:
+				}
+			}
 		} else {
 			DPrintf("Stepping down to follower from candidate on peer %v \n", rf.me)
 			rf.state = Follower
@@ -309,7 +317,10 @@ func (rf *Raft) candidateLoop() {
 func (rf *Raft) peerHeartBeat(i int) {
 	// timer := time.NewTimer(d time.Duration)
 	for {
-		time.Sleep(50 * time.Millisecond)
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-rf.resetHeartBeats[i]:
+		}
 
 		// DPrintf("Peer heartbeat %v to %v woke up \n", rf.me, i)
 		needsMore := true
@@ -371,7 +382,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	mu.Lock()
 	ps := PersistentState{VotedFor: -1, Log: []LogEntry{{-1, true, -1}}}
 
-	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1, nextIndex: make([]int, len(peers)), matchIndex: make([]int, len(peers)), notifyLeader: sync.Cond{L: &mu}}
+	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1, nextIndex: make([]int, len(peers)), matchIndex: make([]int, len(peers)), resetHeartBeats: make([]chan struct{}, len(peers))}
 	go rf.candidateLoop()
 	for i := range rf.others() {
 		go rf.peerHeartBeat(i)
