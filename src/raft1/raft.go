@@ -79,7 +79,7 @@ func (rf *Raft) persist() {
 	raftstate := w.Bytes()
 	rf.persister.Save(raftstate, nil)
 
-	rf.dbg("Persisted state, currentTerm: %v, votedFor: %v \n", rf.CurrentTerm, rf.VotedFor)
+	// rf.dbg("Persisted state, currentTerm: %v, votedFor: %v \n", rf.CurrentTerm, rf.VotedFor)
 }
 
 func (rf *Raft) readPersist(data []byte) {
@@ -195,9 +195,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.commitIndex = min(len(rf.Log)-1, args.LeaderCommit)
 		reply.Success = true
 		rf.persist()
-		rf.dbg("Accepted incoming AE from %v, commitIndex: %v, len(log): %v", rf.commitIndex, len(rf.Log))
+		rf.dbg("Accepted incoming AE from %v, commitIndex: %v, len(log): %v", args.LeaderId, rf.commitIndex, len(rf.Log))
 	} else {
-		rf.dbg("Temporarily rejected incoming AE on log, ours: (len(log): %v, PrevLogTerm: %v), theirs (PrevLogIndex: %v, PrevLogTerm: %v) \n", len(rf.Log), rf.Log[args.PrevLogIndex].Term, args.PrevLogIndex, args.PrevLogTerm)
+		rf.dbg("Temporarily rejected incoming AE on log, ours: (len(log): %v), theirs (PrevLogIndex: %v, PrevLogTerm: %v) \n", len(rf.Log), args.PrevLogIndex, args.PrevLogTerm)
 	}
 
 }
