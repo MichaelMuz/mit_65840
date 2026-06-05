@@ -141,6 +141,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.VotedFor = args.CandidateId
 		rf.leader = args.CandidateId
 		reply.VoteGranted = true
+		rf.leaderLease = time.Now()
 		rf.persist()
 		rf.dbg("Granted RV to peer %v", args.CandidateId)
 	} else {
@@ -150,7 +151,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 
-	rf.dbg("Sending RV from %v, with args: {Term: %v, LastLogIndex: %v, LastLogTerm: %v} \n", server, args.Term, args.LastLogIndex, args.LastLogTerm)
+	rf.dbg("Sending RV to %v, with args: {Term: %v, LastLogIndex: %v, LastLogTerm: %v} \n", server, args.Term, args.LastLogIndex, args.LastLogTerm)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	rf.dbg("Sent RV from %v, ok=%v \n", server, ok)
 	return ok

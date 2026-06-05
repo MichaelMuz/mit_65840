@@ -123,7 +123,7 @@ func TestManyElections3A(t *testing.T) {
 		ts.g.DisconnectAll(i1)
 		ts.g.DisconnectAll(i2)
 		ts.g.DisconnectAll(i3)
-		DPrintf("Disconnected leaders %v, %v, %v", i1, i2, i3)
+		DPrintf("Disconnected peers %v, %v, %v", i1, i2, i3)
 		tester.AnnotateConnection(ts.g.GetConnected())
 
 		// either the current leader should still be alive,
@@ -133,7 +133,7 @@ func TestManyElections3A(t *testing.T) {
 		ts.g.ConnectOne(i1)
 		ts.g.ConnectOne(i2)
 		ts.g.ConnectOne(i3)
-		DPrintf("Reconnected leaders %v, %v, %v", i1, i2, i3)
+		DPrintf("Reconnected peers %v, %v, %v", i1, i2, i3)
 		tester.AnnotateConnection(ts.g.GetConnected())
 	}
 	ts.checkOneLeader()
