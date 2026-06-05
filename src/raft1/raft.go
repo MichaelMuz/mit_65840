@@ -55,7 +55,7 @@ type Raft struct {
 }
 
 func (rf *Raft) dbg(format string, a ...any) {
-	rf.dbg("[%v] "+format, append([]any{rf.me}, a...)...)
+	DPrintf("[%v] "+format, append([]any{rf.me}, a...)...)
 }
 
 func (rf *Raft) others() iter.Seq2[int, *labrpc.ClientEnd] {
