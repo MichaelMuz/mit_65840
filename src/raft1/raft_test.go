@@ -66,6 +66,7 @@ func TestReElection3A(t *testing.T) {
 
 	// if the leader disconnects, a new one should be elected.
 	ts.g.DisconnectAll(leader1)
+	DPrintf("Disconnected leader %v", leader1)
 	tester.AnnotateConnection(ts.g.GetConnected())
 	ts.checkOneLeader()
 
@@ -73,13 +74,16 @@ func TestReElection3A(t *testing.T) {
 	// disturb the new leader. and the old leader
 	// should switch to follower.
 	ts.g.ConnectOne(leader1)
+	DPrintf("Reconnected leader %v", leader1)
 	tester.AnnotateConnection(ts.g.GetConnected())
 	leader2 := ts.checkOneLeader()
 
 	// if there's no quorum, no new leader should
 	// be elected.
 	ts.g.DisconnectAll(leader2)
+	DPrintf("Disconnected leader %v", leader2)
 	ts.g.DisconnectAll((leader2 + 1) % servers)
+	DPrintf("Disconnected leader %v", (leader2+1)%servers)
 	tester.AnnotateConnection(ts.g.GetConnected())
 	time.Sleep(2 * RaftElectionTimeout)
 
@@ -89,11 +93,13 @@ func TestReElection3A(t *testing.T) {
 
 	// if a quorum arises, it should elect a leader.
 	ts.g.ConnectOne((leader2 + 1) % servers)
+	DPrintf("Reconnected leader %v", (leader2+1)%servers)
 	tester.AnnotateConnection(ts.g.GetConnected())
 	ts.checkOneLeader()
 
 	// re-join of last node shouldn't prevent leader from existing.
 	ts.g.ConnectOne(leader2)
+	DPrintf("Reconnected leader %v", leader2)
 	tester.AnnotateConnection(ts.g.GetConnected())
 	ts.checkOneLeader()
 }
@@ -117,6 +123,7 @@ func TestManyElections3A(t *testing.T) {
 		ts.g.DisconnectAll(i1)
 		ts.g.DisconnectAll(i2)
 		ts.g.DisconnectAll(i3)
+		DPrintf("Disconnected leaders %v, %v, %v", i1, i2, i3)
 		tester.AnnotateConnection(ts.g.GetConnected())
 
 		// either the current leader should still be alive,
@@ -126,6 +133,7 @@ func TestManyElections3A(t *testing.T) {
 		ts.g.ConnectOne(i1)
 		ts.g.ConnectOne(i2)
 		ts.g.ConnectOne(i3)
+		DPrintf("Reconnected leaders %v, %v, %v", i1, i2, i3)
 		tester.AnnotateConnection(ts.g.GetConnected())
 	}
 	ts.checkOneLeader()
