@@ -381,6 +381,8 @@ func (rf *Raft) peerHeartBeat(i int) {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *tester.Persister, applyCh chan raftapi.ApplyMsg) raftapi.Raft {
 
+	log.SetFlags(log.Lmicroseconds | log.Lshortfile)
+
 	mu := sync.Mutex{}
 
 	mu.Lock()
