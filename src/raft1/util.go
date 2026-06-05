@@ -1,11 +1,18 @@
 package raft
 
-import "log"
+import (
+	"log"
+	"sync"
+)
 
 // Debugging
 const Debug = true
 
-func DPrintf(format string, a ...interface{}) {
+func DPrintf(format string, a ...any) {
+	sync.OnceFunc(func() {
+		log.SetFlags(log.Lmicroseconds | log.Lshortfile)
+	})
+
 	if Debug {
 		log.Printf(format, a...)
 	}

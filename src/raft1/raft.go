@@ -54,6 +54,10 @@ type Raft struct {
 	matchIndex []int
 }
 
+func (rf *Raft) dbg(format string, a ...any) {
+	rf.dbg("[%v] "+format, append([]any{rf.me}, a...)...)
+}
+
 func (rf *Raft) others() iter.Seq2[int, *labrpc.ClientEnd] {
 	return func(yield func(int, *labrpc.ClientEnd) bool) {
 		for i, p := range rf.peers {
@@ -75,7 +79,7 @@ func (rf *Raft) persist() {
 	raftstate := w.Bytes()
 	rf.persister.Save(raftstate, nil)
 
-	DPrintf("Persisted state, currentTerm: %v, votedFor: %v \n", rf.CurrentTerm, rf.VotedFor)
+	rf.dbg("Persisted state, currentTerm: %v, votedFor: %v \n", rf.CurrentTerm, rf.VotedFor)
 }
 
 func (rf *Raft) readPersist(data []byte) {
@@ -94,7 +98,7 @@ func (rf *Raft) readPersist(data []byte) {
 		rf.PersistentState = s
 	}
 
-	DPrintf("Read persisted state, currentTerm: %v, votedFor: %v \n", rf.CurrentTerm, rf.VotedFor)
+	rf.dbg("Read persisted state, currentTerm: %v, votedFor: %v \n", rf.CurrentTerm, rf.VotedFor)
 }
 
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
@@ -116,7 +120,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	DPrintf("Vote Requested from me (id:%v, term:%v) by peer %v, with term %v \n", rf.me, rf.CurrentTerm, args.CandidateId, args.Term)
+	rf.dbg("Vote Requested (term:%v) by peer %v, with term %v \n", rf.CurrentTerm, args.CandidateId, args.Term)
 
 	lastLogIndex := len(rf.Log) - 1
 	lastLogTerm := rf.Log[lastLogIndex].Term
@@ -125,7 +129,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	reply.VoteGranted = false
 
 	if args.Term < rf.CurrentTerm || (args.Term == rf.CurrentTerm && (rf.VotedFor != -1 || rf.VotedFor != args.CandidateId)) {
-		DPrintf("Rejected vote request me on term: (id:%v, term:%v) by peer %v, with term %v, my term: %v, votedFor: %v \n", rf.me, rf.CurrentTerm, args.CandidateId, args.Term, rf.CurrentTerm, rf.VotedFor)
+		rf.dbg("Rejected vote request on term: term:%v by peer %v, with term %v, my term: %v, votedFor: %v \n", rf.CurrentTerm, args.CandidateId, args.Term, rf.CurrentTerm, rf.VotedFor)
 		return
 	}
 
@@ -135,16 +139,17 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		rf.CurrentTerm = args.Term
 		rf.state = Follower
 		rf.VotedFor = args.CandidateId
+		rf.leader = args.CandidateId
 		reply.VoteGranted = true
 		rf.persist()
 	} else {
-		DPrintf("Rejected vote request me on log: (lastTerm:%v, lastIndex:%v) by peer %v, with lastTerm %v, lastIndex: %v\n", lastLogTerm, lastLogIndex, args.CandidateId, args.LastLogTerm, args.LastLogIndex)
+		rf.dbg("Rejected vote request on log: (lastTerm:%v, lastIndex:%v) by peer %v, with lastTerm %v, lastIndex: %v\n", lastLogTerm, lastLogIndex, args.CandidateId, args.LastLogTerm, args.LastLogIndex)
 	}
 }
 
 func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *RequestVoteReply) bool {
 
-	DPrintf("Requesting vote from %v I am %v, args: %v \n", server, rf.me, args)
+	rf.dbg("Requesting vote from %v, args: %v \n", server, args)
 
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
 	return ok
@@ -168,7 +173,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	DPrintf("Seeing AE at %v, args: %v \n", rf.me, args)
+	rf.dbg("Seeing AE args: %v \n", args)
 
 	reply.Term = rf.CurrentTerm
 	reply.Success = false
@@ -194,7 +199,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *AppendEntriesReply) bool {
 
-	DPrintf("Sending AE I am %v, args: %v \n", rf.me, args)
+	rf.dbg("Sending AE, args: %v \n", args)
 
 	ok := rf.peers[server].Call("Raft.AppendEntries", args, reply)
 	return ok
@@ -213,7 +218,7 @@ func (rf *Raft) candidateLoop() {
 			continue
 		}
 
-		DPrintf("Becoming candidate, I am %v, state: %v \n", rf.me, rf.state)
+		rf.dbg("Becoming candidate, state: %v \n", rf.state)
 
 		rf.state = Candidate
 		rf.CurrentTerm++
@@ -232,7 +237,7 @@ func (rf *Raft) candidateLoop() {
 				r := RequestVoteReply{}
 				ok := rf.sendRequestVote(i, a, &r)
 				if !ok {
-					DPrintf("%v sending to %v failed", a.CandidateId, i)
+					rf.dbg("%v sending to %v failed", a.CandidateId, i)
 				}
 				reps <- &r // if we failed then no vote and term is 0, fine
 			})
@@ -269,12 +274,12 @@ func (rf *Raft) candidateLoop() {
 			}
 		}
 
-		DPrintf("Got %v yes, %v no on peer %v \n", votesY, votesN, rf.me)
+		rf.dbg("Got %v yes, %v no\n", votesY, votesN)
 
 		rf.mu.Lock()
 		if maxTerm > term {
 			if maxTerm > term {
-				DPrintf("Stepped down (%v) bc someone had term %v which is bigger than mine: %v", rf.me, maxTerm, rf.CurrentTerm)
+				rf.dbg("Stepped down bc someone had term %v which is bigger than mine: %v", maxTerm, rf.CurrentTerm)
 			}
 			rf.CurrentTerm = max(rf.CurrentTerm, maxTerm)
 			rf.state = Follower
@@ -289,7 +294,7 @@ func (rf *Raft) candidateLoop() {
 		}
 
 		if votesY >= needY {
-			DPrintf("Won election on peer %v \n", rf.me)
+			rf.dbg("Won election \n")
 			for i := range rf.others() {
 				rf.nextIndex[i] = len(rf.Log)
 				rf.matchIndex[i] = 0
@@ -307,7 +312,7 @@ func (rf *Raft) candidateLoop() {
 				}
 			}
 		} else {
-			DPrintf("Stepping down to follower from candidate on peer %v \n", rf.me)
+			rf.dbg("Stepping down to follower from candidate\n")
 			rf.state = Follower
 		}
 		rf.mu.Unlock()
@@ -322,7 +327,6 @@ func (rf *Raft) peerHeartBeat(i int) {
 		case <-rf.resetHeartBeats[i]:
 		}
 
-		// DPrintf("Peer heartbeat %v to %v woke up \n", rf.me, i)
 		needsMore := true
 		for needsMore {
 			needsMore = false
@@ -333,7 +337,7 @@ func (rf *Raft) peerHeartBeat(i int) {
 				break
 			}
 
-			DPrintf("Sending heartbeat from %v to %v \n", rf.me, i)
+			rf.dbg("Sending heartbeat from %v \n", i)
 
 			pi := rf.nextIndex[i] - 1
 			a := AppendEntriesArgs{rf.CurrentTerm, rf.me, pi, rf.Log[pi].Term, rf.Log[rf.nextIndex[i]:], rf.commitIndex}
@@ -355,17 +359,17 @@ func (rf *Raft) peerHeartBeat(i int) {
 				slices.Reverse(srt)
 				// we always add a noop log as soon as we are leader so we know our term is at the top so prev term edge case doesn't exist
 				rf.commitIndex = srt[len(rf.peers)/2+1]
-				DPrintf("Peer %v caught up on log \n", i)
+				rf.dbg("Peer %v caught up on log \n", i)
 			} else if r.Term > rf.CurrentTerm {
 				rf.CurrentTerm = r.Term
 				rf.state = Follower
 				rf.VotedFor = -1
 				rf.leader = -1
-				DPrintf("Peer %v knows about term %v, %v stepping down \n", i, r.Term, rf.me)
+				rf.dbg("Peer %v knows about term %v, stepping down \n", i, r.Term)
 			} else {
 				rf.nextIndex[i]--
 				needsMore = true
-				DPrintf("Peer %v not caught up, %v retrying heartbeat with prev ind \n", i, rf.me)
+				rf.dbg("Peer %v not caught up, retrying heartbeat with prev ind \n", i)
 			}
 			rf.mu.Unlock()
 		}
@@ -375,14 +379,15 @@ func (rf *Raft) peerHeartBeat(i int) {
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *tester.Persister, applyCh chan raftapi.ApplyMsg) raftapi.Raft {
 
-	DPrintf("Make called on %v \n", me)
-
 	mu := sync.Mutex{}
 
 	mu.Lock()
 	ps := PersistentState{VotedFor: -1, Log: []LogEntry{{-1, true, -1}}}
 
 	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1, nextIndex: make([]int, len(peers)), matchIndex: make([]int, len(peers)), resetHeartBeats: make([]chan struct{}, len(peers))}
+
+	rf.dbg("Make called on me \n")
+
 	go rf.candidateLoop()
 	for i := range rf.others() {
 		go rf.peerHeartBeat(i)
@@ -403,6 +408,8 @@ func (rf *Raft) PersistBytes() int {
 func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+
+	rf.dbg("Being tested, I am leader: %v, my current term: %v", rf.state == Leader, rf.CurrentTerm)
 
 	return rf.CurrentTerm, rf.state == Leader
 }
