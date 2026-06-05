@@ -153,7 +153,7 @@ func (rf *Raft) sendRequestVote(server int, args *RequestVoteArgs, reply *Reques
 
 	rf.dbg("Sending RV to %v, with args: {Term: %v, LastLogIndex: %v, LastLogTerm: %v} \n", server, args.Term, args.LastLogIndex, args.LastLogTerm)
 	ok := rf.peers[server].Call("Raft.RequestVote", args, reply)
-	rf.dbg("Sent RV from %v, ok=%v \n", server, ok)
+	rf.dbg("Sent RV to %v, ok=%v \n", server, ok)
 	return ok
 }
 
@@ -216,7 +216,7 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 // technically we are supposed to reset timer right after we start election and bail early if chimes
 func (rf *Raft) candidateLoop() {
 	for {
-		dur := time.Duration(300+(rand.Int63()%150)) * time.Millisecond
+		dur := time.Duration(250+(rand.Int63()%150)) * time.Millisecond
 		time.Sleep(dur)
 		rf.mu.Lock()
 		if rf.state != Follower || time.Since(rf.leaderLease) < dur {
@@ -315,7 +315,7 @@ func (rf *Raft) candidateLoop() {
 				}
 			}
 		} else {
-			rf.dbg("Stepping down to follower from candidate\n")
+			rf.dbg("Stepping down from candidate to follower\n")
 			rf.state = Follower
 		}
 		rf.mu.Unlock()
@@ -326,7 +326,7 @@ func (rf *Raft) peerHeartBeat(i int) {
 	// timer := time.NewTimer(d time.Duration)
 	for {
 		select {
-		case <-time.After(200 * time.Millisecond):
+		case <-time.After(150 * time.Millisecond):
 			// rf.dbg("Wokeup heartbeat to peer %v based on timer", i)
 		case <-rf.resetHeartBeats[i]:
 			// rf.dbg("Wokeup heartbeat to peer %v based on reset", i)

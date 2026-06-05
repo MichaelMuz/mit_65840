@@ -93,13 +93,13 @@ func TestReElection3A(t *testing.T) {
 
 	// if a quorum arises, it should elect a leader.
 	ts.g.ConnectOne((leader2 + 1) % servers)
-	DPrintf("Reconnected leader %v", (leader2+1)%servers)
+	DPrintf("Reconnected peer %v", (leader2+1)%servers)
 	tester.AnnotateConnection(ts.g.GetConnected())
 	ts.checkOneLeader()
 
 	// re-join of last node shouldn't prevent leader from existing.
 	ts.g.ConnectOne(leader2)
-	DPrintf("Reconnected leader %v", leader2)
+	DPrintf("Reconnected peer %v", leader2)
 	tester.AnnotateConnection(ts.g.GetConnected())
 	ts.checkOneLeader()
 }
