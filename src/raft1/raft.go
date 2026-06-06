@@ -231,6 +231,9 @@ func (rf *Raft) candidateLoop() {
 		prevCandTimeout = false
 
 		if ok := prevTimedOut || stepUp; !ok {
+			if rf.state == Candidate {
+				rf.state = Follower
+			}
 			// we can be candidate bc we may have timed on our prev election and are retrying immediately
 			rf.mu.Unlock()
 			continue
