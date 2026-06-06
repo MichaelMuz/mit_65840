@@ -227,7 +227,7 @@ func (rf *Raft) candidateLoop() {
 
 		rf.mu.Lock()
 
-		if ok := (prevCandTimeout && rf.state == Candidate) || (rf.state == Follower && time.Since(rf.leaderLease) < dur); !ok {
+		if ok := (rf.state == Candidate && prevCandTimeout) || (rf.state == Follower && time.Since(rf.leaderLease) >= dur); !ok {
 			// we can be candidate bc we may have timed on our prev election and are retrying immediately
 			rf.mu.Unlock()
 			continue
