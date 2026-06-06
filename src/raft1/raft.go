@@ -223,11 +223,15 @@ func (rf *Raft) candidateLoop() {
 			dur = genDur()
 			time.Sleep(dur)
 		}
-		prevCandTimeout = false
 
 		rf.mu.Lock()
 
-		if ok := (rf.state == Candidate && prevCandTimeout) || (rf.state == Follower && time.Since(rf.leaderLease) >= dur); !ok {
+		// rf.dbg("Candidate loop checking, prevCandTimedout: %v, rf.state == Candidate: %v", prevCandTimeout, rf.state == Candidate)
+		prevTimedOut := (rf.state == Candidate && prevCandTimeout)
+		stepUp := (rf.state == Follower && time.Since(rf.leaderLease) >= dur)
+		prevCandTimeout = false
+
+		if ok := prevTimedOut || stepUp; !ok {
 			// we can be candidate bc we may have timed on our prev election and are retrying immediately
 			rf.mu.Unlock()
 			continue
@@ -383,6 +387,7 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 		rf.state = Follower
 		rf.VotedFor = -1
 		rf.leader = -1
+		rf.leaderLease = time.Now() // if we don't update here we will be candidate pathalogically update our term so the real leader steps down on next AE
 		rf.dbg("Peer %v knows about term %v, stepping down \n", i, r.Term)
 	} else {
 		rf.nextIndex[i]--
