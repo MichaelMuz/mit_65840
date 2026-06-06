@@ -313,9 +313,7 @@ func (rf *Raft) candidateLoop() {
 
 		rf.mu.Lock()
 		if maxTerm > term {
-			if maxTerm > term {
-				rf.dbg("Stepped down bc someone had term %v which is bigger than mine: %v", maxTerm, rf.CurrentTerm)
-			}
+			rf.dbg("Stepped down bc someone had term %v which is bigger than mine: %v", maxTerm, rf.CurrentTerm)
 			rf.CurrentTerm = max(rf.CurrentTerm, maxTerm)
 			rf.state = Follower
 			rf.VotedFor = -1 // idk who the leader is
@@ -355,10 +353,12 @@ func (rf *Raft) candidateLoop() {
 }
 
 func (rf *Raft) singleHeartBeat(i int) bool {
+	ret := false
+
 	rf.mu.Lock()
 	if rf.state != Leader {
 		rf.mu.Unlock()
-		return false
+		return ret
 	}
 
 	pi := rf.nextIndex[i] - 1
@@ -372,7 +372,7 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 
 	if rf.state != Leader {
 	} else if !ok {
-		return true
+		ret = true
 	} else if r.Success {
 		rf.nextIndex[i] = len(rf.Log)
 		rf.matchIndex[i] = len(rf.Log) - 1
@@ -394,7 +394,7 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 		rf.dbg("Peer %v not caught up, retrying heartbeat with prev ind \n", i)
 	}
 	rf.mu.Unlock()
-	return false
+	return ret
 }
 
 func (rf *Raft) peerHeartBeat(i int) {
