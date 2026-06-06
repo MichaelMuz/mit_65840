@@ -217,10 +217,9 @@ func (rf *Raft) candidateLoop() {
 	}
 	prevCandTimeout := false
 	for {
-
-		var dur time.Duration = 0
+		dur := genDur()
 		if !prevCandTimeout {
-			dur = genDur()
+			// if didn't time out we def sleep, we will check if we are candidate still with the lock otherwise we come back since time cond won't pass anyway
 			time.Sleep(dur)
 		}
 
