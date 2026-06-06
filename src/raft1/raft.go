@@ -133,10 +133,11 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 
+	// learned about greater or equal term
+	rf.CurrentTerm = args.Term
 	rf.leader = -1
 
 	if args.LastLogTerm > lastLogTerm || (args.LastLogTerm == lastLogTerm && args.LastLogIndex >= lastLogIndex) {
-		rf.CurrentTerm = args.Term
 		rf.state = Follower
 		rf.VotedFor = args.CandidateId
 		rf.leader = args.CandidateId
