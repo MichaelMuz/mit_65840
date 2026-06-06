@@ -215,18 +215,19 @@ func (rf *Raft) candidateLoop() {
 	genDur := func() time.Duration {
 		return time.Duration(250+(rand.Int63()%150)) * time.Millisecond
 	}
-	needTimer := true
+	prevCandTimeout := false
 	for {
 
 		var dur time.Duration = 0
-		if needTimer {
+		if !prevCandTimeout {
 			dur = genDur()
 			time.Sleep(dur)
 		}
-		needTimer = true
+		prevCandTimeout = false
 
 		rf.mu.Lock()
-		if (rf.state != Follower && rf.state != Candidate) || time.Since(rf.leaderLease) < dur {
+
+		if ok := (prevCandTimeout && rf.state == Candidate) || (rf.state == Follower && time.Since(rf.leaderLease) < dur); !ok {
 			// we can be candidate bc we may have timed on our prev election and are retrying immediately
 			rf.mu.Unlock()
 			continue
@@ -276,10 +277,10 @@ func (rf *Raft) candidateLoop() {
 				//we are supposed to reset timer right after we start election and bail early if chimes
 				// I thought about this and the only place it makes sense to care about the reset timer
 				// otherwise you'd be checking it between cpu/memory bound computations, sync work
-				needTimer = false
+				prevCandTimeout = true
 			}
 
-			if !needTimer {
+			if prevCandTimeout {
 				// we need more votes and timer went off. Not winning this one
 				break
 			} else if r.VoteGranted {
@@ -299,7 +300,7 @@ func (rf *Raft) candidateLoop() {
 			}
 		}
 
-		if !needTimer {
+		if prevCandTimeout {
 			// can't say we are candidate bc no lock but we are about to skip the timer immediately anyway
 			continue
 		}
