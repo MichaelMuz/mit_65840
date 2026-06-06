@@ -211,15 +211,23 @@ func (rf *Raft) sendAppendEntries(server int, args *AppendEntriesArgs, reply *Ap
 	return ok
 }
 
-// this thing knows when we turn to a leader so maybe we should go call the heartbeats here
-// then they can return if they notice we are not the leader, but then we would need to cancel
-// technically we are supposed to reset timer right after we start election and bail early if chimes
 func (rf *Raft) candidateLoop() {
+	genDur := func() time.Duration {
+		return time.Duration(250+(rand.Int63()%150)) * time.Millisecond
+	}
+	needTimer := true
 	for {
-		dur := time.Duration(250+(rand.Int63()%150)) * time.Millisecond
-		time.Sleep(dur)
+
+		var dur time.Duration = 0
+		if needTimer {
+			dur = genDur()
+			time.Sleep(dur)
+		}
+		needTimer = true
+
 		rf.mu.Lock()
-		if rf.state != Follower || time.Since(rf.leaderLease) < dur {
+		if (rf.state != Follower && rf.state != Candidate) || time.Since(rf.leaderLease) < dur {
+			// we can be candidate bc we may have timed on our prev election and are retrying immediately
 			rf.mu.Unlock()
 			continue
 		}
@@ -259,8 +267,22 @@ func (rf *Raft) candidateLoop() {
 		needN := peers - needY + 1
 		votesY := 1 // voted for self
 		votesN := 0
-		for r := range reps {
-			if r.VoteGranted {
+		for {
+			var r *RequestVoteReply
+
+			select {
+			case r = <-reps:
+			case <-time.After(genDur()):
+				//we are supposed to reset timer right after we start election and bail early if chimes
+				// I thought about this and the only place it makes sense to care about the reset timer
+				// otherwise you'd be checking it between cpu/memory bound computations, sync work
+				needTimer = false
+			}
+
+			if !needTimer {
+				// we need more votes and timer went off. Not winning this one
+				break
+			} else if r.VoteGranted {
 				votesY += 1
 			} else if r.Term > term {
 				// immediately step down to follower
@@ -275,6 +297,11 @@ func (rf *Raft) candidateLoop() {
 			} else if votesN >= needN {
 				break
 			}
+		}
+
+		if !needTimer {
+			// can't say we are candidate bc no lock but we are about to skip the timer immediately anyway
+			continue
 		}
 
 		rf.dbg("Got %v yes, %v no\n", votesY, votesN)
@@ -309,7 +336,7 @@ func (rf *Raft) candidateLoop() {
 			for i := range len(rf.peers) {
 				select {
 				// send heartbeat immediately
-				// don't need this buffered bc if we are currently sending a heartbeat no need for another
+				// size one so if we select default we will get a heartbeat momentarily
 				case rf.resetHeartBeats[i] <- struct{}{}:
 				default:
 				}
@@ -322,8 +349,50 @@ func (rf *Raft) candidateLoop() {
 	}
 }
 
+func (rf *Raft) singleHeartBeat(i int) bool {
+	rf.mu.Lock()
+	if rf.state != Leader {
+		rf.mu.Unlock()
+		return false
+	}
+
+	pi := rf.nextIndex[i] - 1
+	a := AppendEntriesArgs{rf.CurrentTerm, rf.me, pi, rf.Log[pi].Term, rf.Log[rf.nextIndex[i]:], rf.commitIndex}
+	rf.mu.Unlock()
+
+	r := AppendEntriesReply{}
+	ok := rf.sendAppendEntries(i, &a, &r)
+
+	rf.mu.Lock()
+
+	if rf.state != Leader {
+	} else if !ok {
+		return true
+	} else if r.Success {
+		rf.nextIndex[i] = len(rf.Log)
+		rf.matchIndex[i] = len(rf.Log) - 1
+		// could have just achieved majority, update commited
+		srt := slices.Sorted(slices.Values(rf.matchIndex))
+		slices.Reverse(srt)
+		// we always add a noop log as soon as we are leader so we know our term is at the top so prev term edge case doesn't exist
+		rf.commitIndex = srt[len(rf.peers)/2+1]
+		rf.dbg("Peer %v caught up on log \n", i)
+	} else if r.Term > rf.CurrentTerm {
+		rf.CurrentTerm = r.Term
+		rf.state = Follower
+		rf.VotedFor = -1
+		rf.leader = -1
+		rf.dbg("Peer %v knows about term %v, stepping down \n", i, r.Term)
+	} else {
+		rf.nextIndex[i]--
+		rf.dbg("Peer %v not caught up, retrying heartbeat with prev ind \n", i)
+	}
+	rf.mu.Unlock()
+	return false
+}
+
 func (rf *Raft) peerHeartBeat(i int) {
-	// timer := time.NewTimer(d time.Duration)
+	beatNum := 0
 	for {
 		select {
 		case <-time.After(150 * time.Millisecond):
@@ -332,50 +401,14 @@ func (rf *Raft) peerHeartBeat(i int) {
 			// rf.dbg("Wokeup heartbeat to peer %v based on reset", i)
 		}
 
-		needsMore := true
-		for needsMore {
-			needsMore = false
-
-			rf.mu.Lock()
-			if rf.state != Leader {
-				rf.mu.Unlock()
-				break
+		go func(bn int) {
+			// don't cancel bc worst case we send some stale heartbeats and return
+			// won't redrive if there has been a beat after us
+			if rf.singleHeartBeat(i) && beatNum == bn {
+				rf.resetHeartBeats[i] <- struct{}{}
 			}
+		}(beatNum)
 
-			pi := rf.nextIndex[i] - 1
-			a := AppendEntriesArgs{rf.CurrentTerm, rf.me, pi, rf.Log[pi].Term, rf.Log[rf.nextIndex[i]:], rf.commitIndex}
-			rf.mu.Unlock()
-
-			r := AppendEntriesReply{}
-			ok := rf.sendAppendEntries(i, &a, &r)
-
-			rf.mu.Lock()
-
-			if rf.state != Leader {
-			} else if !ok {
-				needsMore = true
-			} else if r.Success {
-				rf.nextIndex[i] = len(rf.Log)
-				rf.matchIndex[i] = len(rf.Log) - 1
-				// could have just achieved majority, update commited
-				srt := slices.Sorted(slices.Values(rf.matchIndex))
-				slices.Reverse(srt)
-				// we always add a noop log as soon as we are leader so we know our term is at the top so prev term edge case doesn't exist
-				rf.commitIndex = srt[len(rf.peers)/2+1]
-				rf.dbg("Peer %v caught up on log \n", i)
-			} else if r.Term > rf.CurrentTerm {
-				rf.CurrentTerm = r.Term
-				rf.state = Follower
-				rf.VotedFor = -1
-				rf.leader = -1
-				rf.dbg("Peer %v knows about term %v, stepping down \n", i, r.Term)
-			} else {
-				rf.nextIndex[i]--
-				needsMore = true
-				rf.dbg("Peer %v not caught up, retrying heartbeat with prev ind \n", i)
-			}
-			rf.mu.Unlock()
-		}
 	}
 }
 
@@ -390,6 +423,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	ps := PersistentState{VotedFor: -1, Log: []LogEntry{{-1, true, -1}}}
 
 	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1, nextIndex: make([]int, len(peers)), matchIndex: make([]int, len(peers)), resetHeartBeats: make([]chan struct{}, len(peers))}
+	// I know we wouldn't need to have one for ourselves. Didn't want a map
+	for i := range rf.resetHeartBeats {
+		rf.resetHeartBeats[i] = make(chan struct{}, 1) // buffer of one so when must send a new heartbeat immediately we can select and skip if there is one queued already
+	}
 
 	rf.dbg("Make called on me \n")
 
