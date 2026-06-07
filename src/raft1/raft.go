@@ -168,6 +168,11 @@ type AppendEntriesArgs struct {
 }
 
 type AppendEntriesReply struct {
+	// fast backup
+	// follower should respond with term of conflicing entry (term of the PrevLogIndex it has), the first index of that term, and len of log
+	// leader then: if leader doesn't have that follower's last term at all, backup to prev term and send
+	// if the leader has that term too then should back up to the last entry it has with that term bc we know the follower's stretch the term for more entries than we have
+	// if follower log is even just too short for the prevLogIndex then just back up to last index that follower has
 	Term    int
 	Success bool
 }
