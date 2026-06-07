@@ -430,7 +430,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	mu := sync.Mutex{}
 
 	mu.Lock()
-	ps := PersistentState{VotedFor: -1, Log: []LogEntry{{-1, true, -1}}}
+	ps := PersistentState{CurrentTerm: 0, VotedFor: -1, Log: []LogEntry{{0, true, -1}}}
 
 	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1, nextIndex: make([]int, len(peers)), matchIndex: make([]int, len(peers)), resetHeartBeats: make([]chan struct{}, len(peers))}
 	// I know we wouldn't need to have one for ourselves. Didn't want a map
