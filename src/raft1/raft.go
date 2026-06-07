@@ -337,8 +337,6 @@ func (rf *Raft) candidateLoop() {
 			}
 			rf.state = Leader
 			rf.leader = rf.me
-			// add noop log so we can commit from prev turn without edge cases
-			rf.Log = append(rf.Log, LogEntry{rf.CurrentTerm, true, 0})
 			for i := range len(rf.peers) {
 				select {
 				// send heartbeat immediately
@@ -382,8 +380,11 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 		// could have just achieved majority, update commited
 		srt := slices.Sorted(slices.Values(rf.matchIndex))
 		slices.Reverse(srt)
-		// we always add a noop log as soon as we are leader so we know our term is at the top so prev term edge case doesn't exist
-		rf.commitIndex = srt[len(rf.peers)/2+1]
+		c := srt[len(rf.peers)/2+1]
+		if rf.Log[c].Term == rf.CurrentTerm {
+			// Edge case: can only consider committed if from my term, can't commit prev leader's logs directly
+			rf.commitIndex = c
+		}
 		rf.dbg("Peer %v caught up on log \n", i)
 	} else if r.Term > rf.CurrentTerm {
 		rf.CurrentTerm = r.Term
