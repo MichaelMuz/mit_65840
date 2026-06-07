@@ -466,8 +466,12 @@ func (rf *Raft) GetState() (int, bool) {
 	return rf.CurrentTerm, rf.state == Leader
 }
 func (rf *Raft) Start(command any) (int, int, bool) {
-	index := -1
-	term := -1
-	isLeader := true
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+
+	index := len(rf.Log)
+	term := rf.CurrentTerm
+	isLeader := rf.state == Leader
+
 	return index, term, isLeader
 }
