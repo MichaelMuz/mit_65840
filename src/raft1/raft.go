@@ -26,7 +26,7 @@ const (
 type LogEntry struct {
 	Term  int
 	Noop  bool
-	Value int
+	Value any
 }
 type PersistentState struct {
 	CurrentTerm int
@@ -474,9 +474,13 @@ func (rf *Raft) Start(command any) (int, int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
-	index := len(rf.Log)
-	term := rf.CurrentTerm
 	isLeader := rf.state == Leader
+	term := rf.CurrentTerm
+	index := len(rf.Log)
+
+	if isLeader {
+		rf.Log = append(rf.Log, LogEntry{term, false, command})
+	}
 
 	return index, term, isLeader
 }
