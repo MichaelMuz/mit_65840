@@ -52,6 +52,9 @@ type Raft struct {
 
 	nextIndex  []int
 	matchIndex []int
+
+	commitSignal *sync.Cond
+	applyCh      chan raftapi.ApplyMsg
 }
 
 func (rf *Raft) dbg(format string, a ...any) {
@@ -199,7 +202,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 
 	if len(rf.Log) > args.PrevLogIndex && rf.Log[args.PrevLogIndex].Term == args.PrevLogTerm {
 		rf.Log = append(rf.Log[:args.PrevLogIndex+1], args.Entries...)
-		rf.commitIndex = min(len(rf.Log)-1, args.LeaderCommit)
+		if args.LeaderCommit > rf.commitIndex {
+			rf.commitIndex = min(args.LeaderCommit, len(rf.Log)-1)
+			rf.commitSignal.Signal()
+		} else {
+			rf.dbg("commitIndex behind, not updating commit")
+		}
 		reply.Success = true
 		rf.persist()
 		rf.dbg("Accepted incoming AE from %v, commitIndex: %v, len(log): %v", args.LeaderId, rf.commitIndex, len(rf.Log))
@@ -383,12 +391,14 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 		rf.nextIndex[i] = len(rf.Log)
 		rf.matchIndex[i] = len(rf.Log) - 1
 		// could have just achieved majority, update commited
+		rf.matchIndex[rf.me] = len(rf.Log) - 1 // I am caught up on the whole log for the sort's sake
 		srt := slices.Sorted(slices.Values(rf.matchIndex))
 		slices.Reverse(srt)
 		c := srt[len(rf.peers)/2+1]
 		if rf.Log[c].Term == rf.CurrentTerm {
 			// Edge case: can only consider committed if from my term, can't commit prev leader's logs directly
 			rf.commitIndex = c
+			rf.commitSignal.Signal()
 		}
 		rf.dbg("Peer %v caught up on log \n", i)
 	} else if r.Term > rf.CurrentTerm {
@@ -427,6 +437,25 @@ func (rf *Raft) peerHeartBeat(i int) {
 	}
 }
 
+func (rf *Raft) commitIndexLoop() {
+	rf.mu.Lock()
+	lastCommitIndex := rf.commitIndex
+	rf.mu.Unlock()
+	for {
+		rf.commitSignal.L.Lock()
+
+		for rf.commitIndex <= lastCommitIndex {
+			rf.commitSignal.Wait()
+		}
+
+		for i, l := range rf.Log[lastCommitIndex+1:] {
+			rf.applyCh <- raftapi.ApplyMsg{CommandValid: !l.Noop, Command: l.Value, CommandIndex: i}
+		}
+
+		rf.commitSignal.L.Unlock()
+	}
+}
+
 func Make(peers []*labrpc.ClientEnd, me int,
 	persister *tester.Persister, applyCh chan raftapi.ApplyMsg) raftapi.Raft {
 
@@ -437,7 +466,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	mu.Lock()
 	ps := PersistentState{CurrentTerm: 0, VotedFor: -1, Log: []LogEntry{{0, true, -1}}}
 
-	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1, nextIndex: make([]int, len(peers)), matchIndex: make([]int, len(peers)), resetHeartBeats: make([]chan struct{}, len(peers))}
+	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1, nextIndex: make([]int, len(peers)), matchIndex: make([]int, len(peers)), resetHeartBeats: make([]chan struct{}, len(peers)), commitSignal: sync.NewCond(&mu)}
 	// I know we wouldn't need to have one for ourselves. Didn't want a map
 	for i := range rf.resetHeartBeats {
 		rf.resetHeartBeats[i] = make(chan struct{}, 1) // buffer of one so when must send a new heartbeat immediately we can select and skip if there is one queued already
@@ -445,6 +474,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.dbg("Make called on me \n")
 
+	go rf.commitIndexLoop()
 	go rf.candidateLoop()
 	for i := range rf.others() {
 		go rf.peerHeartBeat(i)
