@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"6.5840/labgob"
@@ -417,7 +418,7 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 }
 
 func (rf *Raft) peerHeartBeat(i int) {
-	beatNum := 0
+	beatNum := atomic.Int64{}
 	for {
 		select {
 		case <-time.After(150 * time.Millisecond):
@@ -426,15 +427,15 @@ func (rf *Raft) peerHeartBeat(i int) {
 			// rf.dbg("Wokeup heartbeat to peer %v based on reset", i)
 		}
 
-		beatNum++
+		beatNum.Add(1)
 
-		go func(bn int) {
+		go func(bn int64) {
 			// don't cancel bc worst case we send some stale heartbeats and return
 			// won't redrive if there has been a beat after us
-			if rf.singleHeartBeat(i) && beatNum == bn {
+			if rf.singleHeartBeat(i) && beatNum.Load() == bn {
 				rf.resetHeartBeats[i] <- struct{}{}
 			}
-		}(beatNum)
+		}(beatNum.Load())
 
 	}
 }
