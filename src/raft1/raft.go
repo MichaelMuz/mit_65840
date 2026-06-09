@@ -207,7 +207,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			rf.commitIndex = min(args.LeaderCommit, len(rf.Log)-1)
 			rf.commitSignal.Signal()
 		} else {
-			rf.dbg("commitIndex behind, not updating commit")
+			rf.dbg("commitIndex behind or same, not updating commit. Theirs: %s, ours: %s", args.LeaderCommit, rf.commitIndex)
 		}
 		reply.Success = true
 		rf.persist()
@@ -351,6 +351,8 @@ func (rf *Raft) candidateLoop() {
 			}
 			rf.state = Leader
 			rf.leader = rf.me
+			// section 8 says we must noop so we know latest commit asap
+			rf.Log = append(rf.Log, LogEntry{rf.CurrentTerm, true, 0})
 			for i := range len(rf.peers) {
 				select {
 				// send heartbeat immediately
@@ -396,10 +398,13 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 		srt := slices.Sorted(slices.Values(rf.matchIndex))
 		slices.Reverse(srt)
 		c := srt[len(rf.peers)/2+1]
+		rf.dbg("srt says new commit should be %s", c)
 		if rf.Log[c].Term == rf.CurrentTerm {
 			// Edge case: can only consider committed if from my term, can't commit prev leader's logs directly
 			rf.commitIndex = c
 			rf.commitSignal.Signal()
+		} else {
+			rf.dbg("srt: not from latest term: %v", rf.Log[c].Term)
 		}
 		rf.dbg("Peer %v caught up on log \n", i)
 	} else if r.Term > rf.CurrentTerm {
@@ -504,6 +509,7 @@ func (rf *Raft) GetState() (int, bool) {
 	return rf.CurrentTerm, rf.state == Leader
 }
 func (rf *Raft) Start(command any) (int, int, bool) {
+	rf.dbg("Start called")
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 
@@ -515,5 +521,6 @@ func (rf *Raft) Start(command any) (int, int, bool) {
 		rf.Log = append(rf.Log, LogEntry{term, false, command})
 	}
 
+	rf.dbg("Start answer: index: %v, term: %v, isLeader: %v", index, term, isLeader)
 	return index, term, isLeader
 }
