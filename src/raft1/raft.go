@@ -2,6 +2,7 @@ package raft
 
 import (
 	"bytes"
+	"context"
 	"iter"
 	"log"
 	"math/rand"
@@ -45,10 +46,11 @@ type Raft struct {
 	commitIndex int
 	lastApplied int
 
-	leader          int
-	leaderLease     time.Time
-	resetHeartBeats []chan struct{}
-	state           EState
+	leader             int
+	leaderLease        time.Time
+	resetHeartBeats    []chan struct{}
+	resetHeartBeatsAck []chan struct{}
+	state              EState
 
 	nextIndex  []int
 	matchIndex []int
@@ -358,6 +360,8 @@ func (rf *Raft) candidateLoop() {
 				default:
 				}
 			}
+			// section 8 says to add a noop
+			rf.Log = append(rf.Log, LogEntry{rf.CurrentTerm, true, 0})
 		} else {
 			rf.dbg("Stepping down from candidate to follower\n")
 			rf.state = Follower
@@ -366,13 +370,14 @@ func (rf *Raft) candidateLoop() {
 	}
 }
 
-func (rf *Raft) singleHeartBeat(i int) bool {
-	ret := false
+func (rf *Raft) singleHeartBeat(i int) (bool, bool) {
+	reached := true
+	caughtUp := false
 
 	rf.mu.Lock()
 	if rf.state != Leader {
 		rf.mu.Unlock()
-		return ret
+		return reached, caughtUp
 	}
 
 	pi := rf.nextIndex[i] - 1
@@ -386,7 +391,7 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 
 	if rf.state != Leader {
 	} else if !ok {
-		ret = true
+		reached = true
 	} else if r.Success {
 		rf.nextIndex[i] = len(rf.Log)
 		rf.matchIndex[i] = len(rf.Log) - 1
@@ -396,10 +401,11 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 		slices.Reverse(srt)
 		c := srt[len(rf.peers)/2+1]
 		if rf.Log[c].Term == rf.CurrentTerm {
-			// Edge case: can only consider committed if from my term, can't commit prev leader's logs directly
+			// Edge case: can only consider committed if from my term, can't commit prev leader's logs directly. Not needed for noop but for future small batch sends
 			rf.commitIndex = c
 			rf.commitSignal.Signal()
 		}
+		caughtUp = true
 		rf.dbg("Peer %v caught up on log \n", i)
 	} else if r.Term > rf.CurrentTerm {
 		rf.CurrentTerm = r.Term
@@ -410,10 +416,10 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 		rf.dbg("Peer %v knows about term %v, stepping down \n", i, r.Term)
 	} else {
 		rf.nextIndex[i]--
-		rf.dbg("Peer %v not caught up, retrying heartbeat with prev ind \n", i)
+		rf.dbg("Peer %v not caught up, need to retry heartbeat with prev ind \n", i)
 	}
 	rf.mu.Unlock()
-	return ret
+	return reached, caughtUp
 }
 
 func (rf *Raft) peerHeartBeat(i int) {
@@ -426,14 +432,32 @@ func (rf *Raft) peerHeartBeat(i int) {
 			// rf.dbg("Wokeup heartbeat to peer %v based on reset", i)
 		}
 
+		beatNum += 1
 		go func(bn int) {
 			// don't cancel bc worst case we send some stale heartbeats and return
+			reached, caughtUp := rf.singleHeartBeat(i)
 			// won't redrive if there has been a beat after us
-			if rf.singleHeartBeat(i) && beatNum == bn {
-				rf.resetHeartBeats[i] <- struct{}{}
+			if (!reached || !caughtUp) && beatNum == bn {
+				select {
+				case rf.resetHeartBeats[i] <- struct{}{}:
+				default:
+				}
 			}
-		}(beatNum)
 
+			if reached {
+				// heartbeat suceeded, replace acks (if any) with fresh ones
+				select {
+				case <-rf.resetHeartBeatsAck[i]:
+				default:
+				}
+				select {
+				case rf.resetHeartBeatsAck[i] <- struct{}{}:
+				default:
+				}
+
+			}
+
+		}(beatNum)
 	}
 }
 
@@ -466,10 +490,11 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	mu.Lock()
 	ps := PersistentState{CurrentTerm: 0, VotedFor: -1, Log: []LogEntry{{0, true, -1}}}
 
-	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1, nextIndex: make([]int, len(peers)), matchIndex: make([]int, len(peers)), resetHeartBeats: make([]chan struct{}, len(peers)), commitSignal: sync.NewCond(&mu)}
+	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1, nextIndex: make([]int, len(peers)), matchIndex: make([]int, len(peers)), resetHeartBeats: make([]chan struct{}, len(peers)), resetHeartBeatsAck: make([]chan struct{}, len(peers)), commitSignal: sync.NewCond(&mu)}
 	// I know we wouldn't need to have one for ourselves. Didn't want a map
 	for i := range rf.resetHeartBeats {
 		rf.resetHeartBeats[i] = make(chan struct{}, 1) // buffer of one so when must send a new heartbeat immediately we can select and skip if there is one queued already
+		rf.resetHeartBeatsAck[i] = make(chan struct{}, 1)
 	}
 
 	rf.dbg("Make called on me \n")
@@ -510,6 +535,56 @@ func (rf *Raft) Start(command any) (int, int, bool) {
 
 	if isLeader {
 		rf.Log = append(rf.Log, LogEntry{term, false, command})
+	}
+
+	return index, term, isLeader
+}
+
+// could timestamp when I got in here and make each successful heartbeat renew a lease
+// coud also signal on leader change
+// that could be better than this ack mechanism + sleep
+// Note that this function is not yet required by our raft but I read section 8
+func (rf *Raft) Read(command any) (int, int, bool) {
+	rf.mu.Lock()
+
+	isLeader := rf.state == Leader
+	term := rf.CurrentTerm
+	index := len(rf.Log)
+
+	if isLeader {
+		rf.Log = append(rf.Log, LogEntry{term, false, command})
+		// Now have to heartbeat all to make sure I am still leader so this read has info more up to date than this request
+		pl := len(rf.peers)
+		rf.mu.Unlock()
+		ctx, cancel := context.WithCancel(context.Background())
+		ch := make(chan struct{})
+		for i := range pl {
+			go func(ctx context.Context) {
+				select {
+				case rf.resetHeartBeats[i] <- struct{}{}:
+				default:
+				}
+				select {
+				case <-rf.resetHeartBeatsAck[i]:
+					ch <- struct{}{}
+				case <-ctx.Done():
+				}
+			}(ctx)
+		}
+
+		for acks := 0; isLeader && acks <= pl/2; {
+			select {
+			case <-ch:
+				acks++
+			case <-time.After(150 * time.Millisecond):
+				rf.mu.Lock()
+				isLeader = rf.state == Leader
+				rf.mu.Unlock()
+			}
+		}
+		cancel()
+	} else {
+		rf.mu.Unlock()
 	}
 
 	return index, term, isLeader
