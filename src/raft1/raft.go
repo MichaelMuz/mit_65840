@@ -426,6 +426,8 @@ func (rf *Raft) peerHeartBeat(i int) {
 			// rf.dbg("Wokeup heartbeat to peer %v based on reset", i)
 		}
 
+		beatNum++
+
 		go func(bn int) {
 			// don't cancel bc worst case we send some stale heartbeats and return
 			// won't redrive if there has been a beat after us
