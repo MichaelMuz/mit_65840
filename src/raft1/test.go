@@ -261,6 +261,7 @@ func (ts *Test) nCommitted(index int) (int, any) {
 		cmd1, ok := rs.entry(index)
 
 		if ok {
+			log.Printf("%v committed at index %v", cmd1, index)
 			if count > 0 && cmd != cmd1 {
 				text := fmt.Sprintf("committed values at index %v do not match (%v != %v)",
 					index, cmd, cmd1)
@@ -269,6 +270,8 @@ func (ts *Test) nCommitted(index int) (int, any) {
 			}
 			count += 1
 			cmd = cmd1
+		} else {
+			log.Printf("Nothing committed at index %v", index)
 		}
 	}
 	return count, cmd
@@ -326,6 +329,7 @@ func (ts *Test) one(cmd any, expectedServers int, retry bool) int {
 			t1 := time.Now()
 			for time.Since(t1).Seconds() < 2 {
 				nd, cmd1 := ts.nCommitted(index)
+				log.Printf("%v servers think %v is comitted", nd, cmd1)
 				if nd > 0 && nd >= expectedServers {
 					// committed
 					if cmd1 == cmd {

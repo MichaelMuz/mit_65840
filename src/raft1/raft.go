@@ -202,12 +202,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	rf.leaderLease = time.Now()
 
 	if len(rf.Log) > args.PrevLogIndex && rf.Log[args.PrevLogIndex].Term == args.PrevLogTerm {
+		rf.dbg("Their extra entries: %v, mine before: %v", args.Entries, rf.Log)
 		rf.Log = append(rf.Log[:args.PrevLogIndex+1], args.Entries...)
+		rf.dbg("Their extra entries: %v, mine now: %v", args.Entries, rf.Log)
 		if args.LeaderCommit > rf.commitIndex {
 			rf.commitIndex = min(args.LeaderCommit, len(rf.Log)-1)
 			rf.commitSignal.Signal()
+			rf.dbg("Commit index is now %v", rf.commitIndex)
 		} else {
-			rf.dbg("commitIndex behind or same, not updating commit. Theirs: %s, ours: %s", args.LeaderCommit, rf.commitIndex)
+			rf.dbg("commitIndex behind or same, not updating commit. Theirs: %v, ours: %v", args.LeaderCommit, rf.commitIndex)
 		}
 		reply.Success = true
 		rf.persist()
@@ -344,7 +347,6 @@ func (rf *Raft) candidateLoop() {
 		}
 
 		if votesY >= needY {
-			rf.dbg("Won election \n")
 			for i := range rf.others() {
 				rf.nextIndex[i] = len(rf.Log)
 				rf.matchIndex[i] = 0
@@ -353,6 +355,9 @@ func (rf *Raft) candidateLoop() {
 			rf.leader = rf.me
 			// section 8 says we must noop so we know latest commit asap
 			rf.Log = append(rf.Log, LogEntry{rf.CurrentTerm, true, 0})
+
+			rf.dbg("Won election, len(log): %v \n", len(rf.Log))
+
 			for i := range len(rf.peers) {
 				select {
 				// send heartbeat immediately
@@ -396,17 +401,17 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 		// could have just achieved majority, update commited
 		rf.matchIndex[rf.me] = len(rf.Log) - 1 // I am caught up on the whole log for the sort's sake
 		srt := slices.Sorted(slices.Values(rf.matchIndex))
-		slices.Reverse(srt)
 		c := srt[len(rf.peers)/2+1]
-		rf.dbg("srt says new commit should be %s", c)
+		rf.dbg("srt says new commit should be %v, srt: %v", c, srt)
 		if rf.Log[c].Term == rf.CurrentTerm {
 			// Edge case: can only consider committed if from my term, can't commit prev leader's logs directly
 			rf.commitIndex = c
+			rf.dbg("srt: new commit, signaling")
 			rf.commitSignal.Signal()
 		} else {
-			rf.dbg("srt: not from latest term: %v", rf.Log[c].Term)
+			rf.dbg("srt: not from latest term: %v. Latest term is %v", rf.Log[c].Term, rf.CurrentTerm)
 		}
-		rf.dbg("Peer %v caught up on log \n", i)
+		rf.dbg("Peer %v caught up on log, matchIndex: %v, nextIndex: %v \n", i, rf.matchIndex[i], rf.nextIndex[i])
 	} else if r.Term > rf.CurrentTerm {
 		rf.CurrentTerm = r.Term
 		rf.state = Follower
@@ -456,11 +461,19 @@ func (rf *Raft) commitIndexLoop() {
 			rf.commitSignal.Wait()
 		}
 
-		for i, l := range rf.Log[lastCommitIndex+1:] {
-			rf.applyCh <- raftapi.ApplyMsg{CommandValid: !l.Noop, Command: l.Value, CommandIndex: i}
-		}
+		trueInd := rf.commitIndex
+		add := append([]LogEntry{}, rf.Log[lastCommitIndex+1:]...)
 
 		rf.commitSignal.L.Unlock()
+
+		rf.dbg("Awoke from signal, going to push %v log entries into applyCh", rf.commitIndex-lastCommitIndex)
+
+		for _, l := range add {
+			rf.dbg("Pushing commit with ind %v and value %v", trueInd, l)
+			rf.applyCh <- raftapi.ApplyMsg{CommandValid: !l.Noop, Command: l.Value, CommandIndex: trueInd}
+			trueInd++
+		}
+
 	}
 }
 
@@ -472,7 +485,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	mu := sync.Mutex{}
 
 	mu.Lock()
-	ps := PersistentState{CurrentTerm: 0, VotedFor: -1, Log: []LogEntry{{0, true, -1}}}
+	ps := PersistentState{CurrentTerm: 0, VotedFor: -1, Log: []LogEntry{{0, true, 0}}}
 
 	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1, nextIndex: make([]int, len(peers)), matchIndex: make([]int, len(peers)), resetHeartBeats: make([]chan struct{}, len(peers)), commitSignal: sync.NewCond(&mu)}
 	// I know we wouldn't need to have one for ourselves. Didn't want a map
