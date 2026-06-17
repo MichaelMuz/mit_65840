@@ -208,7 +208,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if args.LeaderCommit > rf.commitIndex {
 			rf.commitIndex = min(args.LeaderCommit, len(rf.Log)-1)
 			rf.commitSignal.Signal()
-			rf.dbg("Commit index is now %v", rf.commitIndex)
+			rf.dbg("Commit index is now %v, log: %v", rf.commitIndex, rf.Log)
 		} else {
 			rf.dbg("commitIndex behind or same, not updating commit. Theirs: %v, ours: %v", args.LeaderCommit, rf.commitIndex)
 		}
@@ -354,7 +354,8 @@ func (rf *Raft) candidateLoop() {
 			rf.state = Leader
 			rf.leader = rf.me
 			// section 8 says we must noop so we know latest commit asap
-			rf.Log = append(rf.Log, LogEntry{rf.CurrentTerm, true, 0})
+			// rf.Log = append(rf.Log, LogEntry{rf.CurrentTerm, true, 0})
+			// We do not add this bc test suite does not like noop logs after 0th index
 
 			rf.dbg("Won election, len(log): %v \n", len(rf.Log))
 
@@ -402,14 +403,15 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 		rf.matchIndex[rf.me] = len(rf.Log) - 1 // I am caught up on the whole log for the sort's sake
 		srt := slices.Sorted(slices.Values(rf.matchIndex))
 		c := srt[len(rf.peers)/2+1]
-		rf.dbg("srt says new commit should be %v, srt: %v", c, srt)
-		if rf.Log[c].Term == rf.CurrentTerm {
+		rf.dbg("srt says commit should be %v, srt: %v", c, srt)
+		if c > rf.commitIndex && rf.Log[c].Term == rf.CurrentTerm {
+			rf.dbg("New commit should be %v, srt: %v", c, srt)
 			// Edge case: can only consider committed if from my term, can't commit prev leader's logs directly
 			rf.commitIndex = c
 			rf.dbg("srt: new commit, signaling")
 			rf.commitSignal.Signal()
 		} else {
-			rf.dbg("srt: not from latest term: %v. Latest term is %v", rf.Log[c].Term, rf.CurrentTerm)
+			rf.dbg("srt: not from latest term or not new: %v. Latest term is %v", rf.Log[c].Term, rf.CurrentTerm)
 		}
 		rf.dbg("Peer %v caught up on log, matchIndex: %v, nextIndex: %v \n", i, rf.matchIndex[i], rf.nextIndex[i])
 	} else if r.Term > rf.CurrentTerm {
@@ -451,9 +453,7 @@ func (rf *Raft) peerHeartBeat(i int) {
 }
 
 func (rf *Raft) commitIndexLoop() {
-	rf.mu.Lock()
-	lastCommitIndex := rf.commitIndex
-	rf.mu.Unlock()
+	lastCommitIndex := -1
 	for {
 		rf.commitSignal.L.Lock()
 
@@ -461,7 +461,6 @@ func (rf *Raft) commitIndexLoop() {
 			rf.commitSignal.Wait()
 		}
 
-		trueInd := rf.commitIndex
 		add := append([]LogEntry{}, rf.Log[lastCommitIndex+1:]...)
 
 		rf.commitSignal.L.Unlock()
@@ -469,9 +468,10 @@ func (rf *Raft) commitIndexLoop() {
 		rf.dbg("Awoke from signal, going to push %v log entries into applyCh", rf.commitIndex-lastCommitIndex)
 
 		for _, l := range add {
-			rf.dbg("Pushing commit with ind %v and value %v", trueInd, l)
-			rf.applyCh <- raftapi.ApplyMsg{CommandValid: !l.Noop, Command: l.Value, CommandIndex: trueInd}
-			trueInd++
+			lastCommitIndex++
+			rf.dbg("Pushing commit with ind %v and value %v", lastCommitIndex, l)
+			rf.applyCh <- raftapi.ApplyMsg{CommandValid: !l.Noop, Command: l.Value, CommandIndex: lastCommitIndex}
+			rf.dbg("Finished pushing commit with ind %v and value %v", lastCommitIndex, l)
 		}
 
 	}
@@ -487,7 +487,7 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	mu.Lock()
 	ps := PersistentState{CurrentTerm: 0, VotedFor: -1, Log: []LogEntry{{0, true, 0}}}
 
-	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1, nextIndex: make([]int, len(peers)), matchIndex: make([]int, len(peers)), resetHeartBeats: make([]chan struct{}, len(peers)), commitSignal: sync.NewCond(&mu)}
+	rf := &Raft{mu: &mu, peers: peers, persister: persister, me: me, PersistentState: ps, leaderLease: time.Now(), leader: -1, nextIndex: make([]int, len(peers)), matchIndex: make([]int, len(peers)), resetHeartBeats: make([]chan struct{}, len(peers)), commitSignal: sync.NewCond(&mu), applyCh: applyCh}
 	// I know we wouldn't need to have one for ourselves. Didn't want a map
 	for i := range rf.resetHeartBeats {
 		rf.resetHeartBeats[i] = make(chan struct{}, 1) // buffer of one so when must send a new heartbeat immediately we can select and skip if there is one queued already
@@ -532,8 +532,9 @@ func (rf *Raft) Start(command any) (int, int, bool) {
 
 	if isLeader {
 		rf.Log = append(rf.Log, LogEntry{term, false, command})
+		// maybe we signal that we want heartbeats here
 	}
 
-	rf.dbg("Start answer: index: %v, term: %v, isLeader: %v", index, term, isLeader)
+	rf.dbg("Start answer: index: %v, term: %v, isLeader: %v, new len(log): %v", index, term, isLeader, len(rf.Log))
 	return index, term, isLeader
 }

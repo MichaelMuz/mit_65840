@@ -10,7 +10,6 @@ import (
 	"6.5840/labrpc"
 	"6.5840/raftapi"
 	"6.5840/tester1"
-
 )
 
 const (
@@ -106,7 +105,9 @@ func (rs *rfsrv) getraft() raftapi.Raft {
 // can check against what it expected.
 func (rs *rfsrv) applier(applyCh chan raftapi.ApplyMsg) {
 	for m := range applyCh {
+		log.Printf("Applier pulled %v", m)
 		if m.CommandValid == false {
+			log.Printf("Got noop at index %v", m.CommandIndex)
 			// ignore other types of ApplyMsg
 		} else {
 			err_msg, prevok := rs.ts.CheckLogs(rs.me, m)
@@ -115,6 +116,7 @@ func (rs *rfsrv) applier(applyCh chan raftapi.ApplyMsg) {
 			}
 			if err_msg != "" {
 				rs.ts.ApplyErr(rs.me, err_msg)
+				log.Printf("Got error at index %v, err: %v", m.CommandIndex, err_msg)
 				// keep reading after error so that Raft doesn't block
 				// holding locks...
 			}

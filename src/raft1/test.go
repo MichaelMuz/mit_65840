@@ -50,6 +50,7 @@ func (rs *raftServer) entry(i int) (any, bool) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 
+	log.Printf("Tester sees rs.logs: %v ", rs.logs)
 	v, ok := rs.logs[i]
 	return v, ok
 }
@@ -192,6 +193,8 @@ func (ts *Test) CheckLogs(i int, m raftapi.ApplyMsg) (string, bool) {
 	if m.CommandIndex > ts.maxIndex {
 		ts.maxIndex = m.CommandIndex
 	}
+
+	log.Printf("Check log returning err_msg: %v, prevok: %v", err_msg, prevok)
 	return err_msg, prevok
 }
 
@@ -259,6 +262,7 @@ func (ts *Test) nCommitted(index int) (int, any) {
 		}
 
 		cmd1, ok := rs.entry(index)
+		log.Printf("cmd1:%v, ok:%v := rs.entry(index:%v)", cmd1, ok, index)
 
 		if ok {
 			log.Printf("%v committed at index %v", cmd1, index)
@@ -345,7 +349,7 @@ func (ts *Test) one(cmd any, expectedServers int, retry bool) int {
 			if retry == false {
 				desp := fmt.Sprintf("agreement of %.8s failed", textcmd)
 				tester.AnnotateCheckerFailure(desp, "failed after submitting command")
-				ts.Fatalf("one(%v) failed to reach agreement", cmd)
+				ts.Fatalf("one(%v) failed to reach agreement (1st fatalf)", cmd)
 			}
 		} else {
 			time.Sleep(50 * time.Millisecond)
@@ -354,7 +358,7 @@ func (ts *Test) one(cmd any, expectedServers int, retry bool) int {
 	if ts.checkFinished() == false {
 		desp := fmt.Sprintf("agreement of %.8s failed", textcmd)
 		tester.AnnotateCheckerFailure(desp, "failed after 10-second timeout")
-		ts.Fatalf("one(%v) failed to reach agreement", cmd)
+		ts.Fatalf("one(%v) failed to reach agreement (2nd fatalf)", cmd)
 	}
 	return -1
 }
