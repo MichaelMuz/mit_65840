@@ -179,6 +179,10 @@ type AppendEntriesReply struct {
 	// if follower log is even just too short for the prevLogIndex then just back up to last index that follower has
 	Term    int
 	Success bool
+
+	TermOfConflicting           int
+	FirstIndexOfConflictingTerm int
+	LastLogIndex                int
 }
 
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
@@ -217,6 +221,15 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		rf.dbg("Accepted incoming AE from %v, commitIndex: %v, len(log): %v", args.LeaderId, rf.commitIndex, len(rf.Log))
 	} else {
 		rf.dbg("Temporarily rejected incoming AE on log, ours: (len(log): %v), theirs (PrevLogIndex: %v, PrevLogTerm: %v) \n", len(rf.Log), args.PrevLogIndex, args.PrevLogTerm)
+		reply.LogLen = len(rf.Log)
+		reply.TermOfConflicting = rf.Log[len(rf.Log)-1].Term
+		reply.FirstIndexOfConflictingTerm = len(rf.Log) - 1
+		for i, v := range slices.Backward(rf.Log) {
+			if v.Term != reply.TermOfConflicting {
+				break
+			}
+			reply.FirstIndexOfConflictingTerm = i
+		}
 	}
 
 }
@@ -421,9 +434,32 @@ func (rf *Raft) singleHeartBeat(i int) bool {
 		rf.leader = -1
 		rf.leaderLease = time.Now() // if we don't update here we will be candidate pathalogically update our term so the real leader steps down on next AE
 		rf.dbg("Peer %v knows about term %v, stepping down \n", i, r.Term)
+
+		// branches below this mean follower agrees we are leader but the logs are staggered
+	} else if r.LastLogIndex < a.PrevLogIndex {
+		// if follower log is just too short for the prevLogIndex then just back up to last index that follower has
+		rf.nextIndex[i] = r.LastLogIndex + 1
 	} else {
-		rf.nextIndex[i]--
-		rf.dbg("Peer %v not caught up, retrying heartbeat with prev ind \n", i)
+		// if leader doesn't have that follower's last term at all, backup to prev term and send
+		// if the leader has that term too then should back up to the last entry it has with that term bc
+		// we know the follower has more entries for that term than we have
+
+		mightHave := 0
+		for i, v := range slices.Backward(rf.Log) {
+			if v.Term == r.TermOfConflicting || v.Term < r.TermOfConflicting {
+				// Terms same: we have it, stop at the last entry we have for it
+				// Our term lower: We didn't have theirs, stop at the last of prev term
+				mightHave = i
+				break
+			}
+		}
+
+		if mightHave == rf.nextIndex[i] {
+			log.Fatalf("Backup says we should try the same thing on %v. Prob a bug \n", i)
+		}
+
+		rf.nextIndex[i] = mightHave + 1
+		rf.dbg("Peer %v not caught up, retrying heartbeat with last one they might have %v \n", i, mightHave)
 	}
 	rf.mu.Unlock()
 	return ret
