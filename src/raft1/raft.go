@@ -208,7 +208,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		if args.LeaderCommit > rf.commitIndex {
 			rf.commitIndex = min(args.LeaderCommit, len(rf.Log)-1)
 			rf.commitSignal.Signal()
-			rf.dbg("Commit index is now %v, log: %v", rf.commitIndex, rf.Log)
+			rf.dbg("Commit index is now %v", rf.commitIndex)
 		} else {
 			rf.dbg("commitIndex behind or same, not updating commit. Theirs: %v, ours: %v", args.LeaderCommit, rf.commitIndex)
 		}
@@ -471,7 +471,6 @@ func (rf *Raft) commitIndexLoop() {
 			lastCommitIndex++
 			rf.dbg("Pushing commit with ind %v and value %v", lastCommitIndex, l)
 			rf.applyCh <- raftapi.ApplyMsg{CommandValid: !l.Noop, Command: l.Value, CommandIndex: lastCommitIndex}
-			rf.dbg("Finished pushing commit with ind %v and value %v", lastCommitIndex, l)
 		}
 
 	}
