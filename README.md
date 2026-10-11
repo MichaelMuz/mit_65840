@@ -40,7 +40,7 @@ go build -C src/main kvsrv1d.go && go test -C src/kvsrv1 ./...
 Swap `3B` for the part being worked on.
 
 ```sh
-go build -C src/main raft1d.go && go test -C src/raft1 -run 3B
+go build -C src/main raft1d.go && go test -C src/raft1 -run 3A
 ```
 
 ## Lectures
