@@ -50,6 +50,7 @@ func (rs *raftServer) entry(i int) (any, bool) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 
+	log.Printf("Tester sees rs.logs: %v ", rs.logs)
 	v, ok := rs.logs[i]
 	return v, ok
 }

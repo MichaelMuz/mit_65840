@@ -472,6 +472,7 @@ func (rf *Raft) commitIndexLoop() {
 			rf.dbg("Pushing commit with ind %v and value %v", lastCommitIndex, l)
 			rf.applyCh <- raftapi.ApplyMsg{CommandValid: !l.Noop, Command: l.Value, CommandIndex: lastCommitIndex}
 		}
+
 	}
 }
 
